@@ -19,6 +19,8 @@ import threading
 import time
 from pathlib import Path
 
+from perception.emotion import clip_features
+
 PERCEPTION_DIR = Path(__file__).resolve().parents[1]  # <repo>/perception
 
 
@@ -125,6 +127,9 @@ class CameraFeedback:
         self.baseline_std = 0.0
         self.last_calibration: dict | None = None
         self._samples = collections.deque(maxlen=3000)  # (time, raw group_liking, dominant emotion)
+        self._probs = collections.deque(maxlen=3000)    # (time, mean happy prob, mean surprised prob)
+        self._motion = collections.deque(maxlen=20000)  # (time, person_id, cx, cy, w, h) per analysed frame
+        self.rest: dict = {}                            # resting smile/movement measured at calibration
         self._sampler = None
         self._clip_start = time.time()
 
@@ -169,8 +174,24 @@ class CameraFeedback:
             r = self._pcv.get_group_reaction("sample")
             conf = [p.confidence for p in r.people]
             if conf and sum(conf) / len(conf) >= MIN_SAMPLE_CONFIDENCE:
-                self._samples.append((time.time(), r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
+                now = time.time()
+                self._samples.append((now, r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
+                hp = self._mean_probs()
+                if hp is not None:
+                    self._probs.append((now, *hp))
             time.sleep(0.1)
+
+    def _mean_probs(self):
+        """Mean (happy, surprised) probability over the faces currently tracked, or None."""
+        svc = self.service
+        if svc is None or not hasattr(svc, "_phones"):
+            return None
+        with svc._lock:
+            tracks = [t for ph in svc._phones.values() for t in ph.tracker.tracks.values()]
+        if not tracks:
+            return None
+        return (sum(t.probs.get("happy", 0.0) for t in tracks) / len(tracks),
+                sum(t.probs.get("surprised", 0.0) for t in tracks) / len(tracks))
 
     def calibrate(self, seconds: float | None = None, say=print, discard: float = 2.0,
                   countdown: int = 3, count_step: float = 1.0, max_attempts: int = 3,
@@ -206,6 +227,8 @@ class CameraFeedback:
                 problems = check_baseline(baseline, spread, max_baseline, max_spread)
                 if not problems:
                     self.baseline, self.baseline_std = baseline, spread
+                    self.rest = clip_features.resting_baseline(list(self._probs), list(self._motion),
+                                                               start + discard, start + seconds)
                     say(f"Baseline resting liking = {baseline:+.2f}  (spread {spread:.2f}, {len(vals)} samples) - accepted")
                     speak_fn("thanks")
                     return baseline
@@ -278,6 +301,10 @@ class CameraFeedback:
         self._ms += (time.time() - t0) * 1000
         self._frames += 1
         self.last_faces = len(reply.get("faces", []))
+        now = time.time()
+        for f in reply.get("faces", []):
+            x, y, w, h = f["box"]
+            self._motion.append((now, f["person_id"], x + w / 2, y + h / 2, w, h))
 
     def _read_webcam(self) -> None:
         import cv2
@@ -316,6 +343,12 @@ class CameraFeedback:
             except Exception as err:  # keep the loop alive; surface it later
                 self.feeder_error = err
             time.sleep(1.0 / self.feed_fps)
+
+    def clip_features(self) -> dict | None:
+        """Features of the clip so far: reaction dynamics plus head/face movement, relative to the resting baseline."""
+        lik = [(t, self._cal(v)) for t, v, _ in list(self._samples) if t >= self._clip_start]
+        return clip_features.clip_features(lik, list(self._probs), list(self._motion),
+                                           self._clip_start, time.time(), self.rest)
 
     def begin_song(self, song) -> None:
         """Called when a song starts (lets a taste-aware mock model know what is playing)."""

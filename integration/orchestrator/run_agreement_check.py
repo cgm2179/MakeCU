@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import random
 import time
 from pathlib import Path
@@ -35,9 +36,18 @@ def rated_ids(path, user):
 def append_row(path, row):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():  # an older file without the newer columns: rewrite it once with the full header
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames != ag.FIELDS:
+                old = list(reader)
+                with open(path, "w", newline="") as g:
+                    w = csv.DictWriter(g, fieldnames=ag.FIELDS, restval="")
+                    w.writeheader()
+                    w.writerows(old)
     new = not path.exists()
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=ag.FIELDS)
+        w = csv.DictWriter(f, fieldnames=ag.FIELDS, restval="")
         if new:
             w.writeheader()
         w.writerow(row)
@@ -56,8 +66,19 @@ def read_thumb(input_fn, prompt):
         print("  Please type u, d, s or q.")
 
 
+def read_count(input_fn, prompt, n):
+    """How many of n people liked the song: an integer 0..n, or 's' / 'q'."""
+    while True:
+        t = input_fn(prompt).strip().lower()
+        if t in ("s", "q"):
+            return t
+        if t.isdigit() and 0 <= int(t) <= n:
+            return int(t)
+        print(f"  Please type a number from 0 to {n}, or s or q.")
+
+
 def collect(feedback, songs, user, out_csv, target=40, player=None, listen_seconds=10.0,
-            input_fn=input, say=print):
+            input_fn=input, say=print, setting="quiet", group_size=1):
     """Play each song, read the camera, ask for the thumb. Returns the number of songs rated this run."""
     done = rated_ids(out_csv, user)
     have = len(done)
@@ -78,14 +99,25 @@ def collect(feedback, songs, user, out_csv, target=40, player=None, listen_secon
         reaction = feedback.get_group_reaction(song.song_id)
         conf = mean_confidence(reaction)
         liking = reaction.group_liking if reaction.people else None
-        thumb = read_thumb(input_fn, "  Did you like it?  u = up, d = down, s = skip song, q = quit: ")
+        feats = feedback.clip_features() if hasattr(feedback, "clip_features") else None
+        likes = ""
+        if group_size > 1:
+            likes = read_count(input_fn, f"  How many of the {group_size} people liked it?  0-{group_size}, s = skip song, q = quit: ", group_size)
+            thumb = likes if likes in ("s", "q") else (1 if 2 * likes > group_size else 0 if 2 * likes < group_size else "tie")
+            if thumb == "tie":
+                say("  an even split: not saved (it says nothing either way)")
+                continue
+        else:
+            thumb = read_thumb(input_fn, "  Did you like it?  u = up, d = down, s = skip song, q = quit: ")
         if thumb == "q":
             break
         if thumb == "s":
             continue
         append_row(out_csv, {"user": user, "song_id": song.song_id, "thumb": thumb,
                              "liking": "" if liking is None else round(liking, 4),
-                             "confidence": round(conf, 4), "emotion": dominant_emotion(reaction), "time": time.time()})
+                             "confidence": round(conf, 4), "emotion": dominant_emotion(reaction), "time": time.time(),
+                             "features": json.dumps({k: round(v, 5) for k, v in feats.items()}) if feats else "",
+                             "setting": setting, "group_size": group_size, "likes": likes})
         rated += 1
         cam = "no face seen" if liking is None else f"camera {liking:+.2f}"
         say(f"  saved: thumb {'UP' if thumb else 'DOWN'}, {cam}")
@@ -149,6 +181,10 @@ def main(argv=None):
                     help="comma-separated moods to draw songs from (gym, party, chill, happy, sad, study)")
     ap.add_argument("--smart", action="store_true",
                     help="use your earlier thumbs to pick songs you are likely to like (half) and random ones (half)")
+    ap.add_argument("--setting", choices=("quiet", "busy"), default="quiet",
+                    help="tag this session: quiet room alone, or busy (several people, music up, movement)")
+    ap.add_argument("--group-size", type=int, default=1,
+                    help="people in front of the camera; with more than 1 you enter how many liked each song")
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--demo", action="store_true", help="scripted fake face and thumbs, no camera or audio (writes to a demo file)")
     ap.add_argument("--seed", type=int, default=0)
@@ -200,7 +236,7 @@ def main(argv=None):
         if not a.demo and a.calibrate_seconds > 0:
             feedback.calibrate(say=print)
         n = collect(feedback, songs, user, out_csv, target=a.songs, player=player,
-                    listen_seconds=listen, input_fn=input_fn)
+                    listen_seconds=listen, input_fn=input_fn, setting=a.setting, group_size=a.group_size)
     finally:
         if player:
             player.close()

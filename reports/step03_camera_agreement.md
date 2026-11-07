@@ -1,13 +1,13 @@
 # Step 3 report: camera vs thumbs agreement (P0.3)
 
-- Generated: 2026-11-07 17:51:20  
-- Code: rl/eval-and-profiles @ a55ac16 (+ uncommitted changes)  
+- Generated: 2026-11-07 18:08:44  
+- Code: rl/eval-and-profiles @ a7634c5 (+ uncommitted changes)  
 - Python 3.9.0 on Darwin  
 - User: adi
 
 ## 1. Unit tests: ALL PASSED
 
-- Ran 113 tests in 47.7s: 113 passed, 0 failed, 0 errors, 0 skipped.
+- Ran 136 tests in 73.7s: 136 passed, 0 failed, 0 errors, 0 skipped.
 - Skipped tests need the camera libraries or the Spotify CSV and are skipped on a plain Python install; a skip is not a pass.
 
 | test file | passed | failed | skipped |
@@ -24,6 +24,7 @@
 | rl.tests.test_eval | 11 | 0 | 0 |
 | rl.tests.test_profile | 6 | 0 | 0 |
 | rl.tests.test_report | 4 | 0 | 0 |
+| rl.tests.test_signals | 23 | 0 | 0 |
 
 ## 2. How well the camera agrees with the person
 
@@ -63,6 +64,10 @@ The general rule ('liking > 0.0025 = liked') was replaced by a rule fitted to th
 | AUC | 0.674 | need 0.65; 0.5 = chance |
 | personal cut-off | 0.04 | the general rule is 0.0025; a song counts as liked when the camera's calibrated liking is above this |
 
+## 2c. Do movement and reaction-dynamics features help? (Step 3c)
+
+**Result: No songs with movement/dynamics features yet. Run the collection tool again (Step 3c).**
+
 ## 3. How the numbers were produced
 
 - **Collection:** songs from the gym and party moods play as 10-second iTunes previews. Before the first song the camera measures a resting baseline (neutral face, guarded against smiling or moving). At the end of each clip the camera reading is the average liking over the last 3 seconds, adjusted relative to that baseline so a neutral face is about 0. Then the person presses up or down.
@@ -73,6 +78,9 @@ The general rule ('liking > 0.0025 = liked') was replaced by a rule fitted to th
 - **Kappa:** (agreement − expected) / (1 − expected), where expected is the agreement two independent raters would reach by chance given how often each says like.
 - **Gate (proposed, fixed beforehand):** at least 40 usable songs and agreement >= 75%.
 - **Step 3b (per-person calibration):** the cut-off on the camera's calibrated liking starts at the general rule (0). It is moved to the value that best catches both this person's liked and disliked songs (best balanced accuracy on the training songs), then shrunk toward 0.0025 by n / (n + 10) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). Gate set before it was run on any data: accuracy >= 75%, balanced accuracy >= 65%, AUC >= 0.65, and at least 10 songs of the rarer thumb (otherwise nothing can be judged). Moving a cut-off cannot change the ranking of songs, so AUC stays low if the camera has no signal.
+
+- **Step 3c (richer features):** per clip the tool records the reaction's mean, peak, low, range, build (last third minus first third) and last-3-seconds average; the smile probability minus the resting smile; and face movement: speed of the face centre, vertical (nodding) speed, and the share of vertical movement in the 1 to 3.5 Hz head-bob band with its amplitude. Movement and smile are measured against the person's own resting baseline from calibration. A logistic model per person (strong pull toward 'no effect', equal to 10 songs of evidence) turns the features into P(thumb up); every song is scored by a model fitted without it, and AUC is computed on those scores. Gate set before any feature data existed: at least 60 songs with features and 15 of each thumb, all-features AUC >= 0.70, and at least 0.05 better than the old reading.
+- **Camera weight:** 2 × (leave-one-out AUC − 0.5), between 0 and 1. It is the share of a thumb's influence the camera gets when the learner combines thumbs, skips and the camera.
 
 ## 4. What these numbers do and do not show
 

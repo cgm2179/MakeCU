@@ -103,6 +103,14 @@ Music topics are never consumed by motion, and the reverse.
 - Database path only: `select_pool` ranks by distance minus a popularity bonus (popularity floor is soft: lower-popularity songs top the pool up, so it is never short); `BanditAgent.mainstream_prior` adds a fading popularity prior while choosing. `run()` switches the prior on only when `pool.source == "database"`, so a user's own playlist is never biased.
 - Tradeoff measured on 16 seeds: strength 0.5 lifts early-pick popularity from ~47 to ~70-82 and costs a taste for unpopular genres ~8 points of learning (91% to 83%); strength 1.0 costs ~20.
 
+## Camera Signals, Reliability and Combined Reward (implemented, opt-in)
+
+- `CameraFeedback.clip_features()` -> per-clip dict (`perception/emotion/clip_features.py`): reaction dynamics (`mean/peak/low/range/build/last3_liking`), `smile`, and movement (`motion`, `vert_motion`, `bob_share`, `bob_amp`), measured against the resting baseline taken in `calibrate()`.
+- `rl/agent/camera_model.py`: `CameraReliability` (per-person logistic model of P(thumb up | features)); `reliability(rows)` returns a camera weight 0..1 = 2 x (leave-one-out AUC - 0.5); 0 below 30 songs with 8 of each thumb. `soft_reward` is relative to the person's usual rate and averages 0.
+- `rl/agent/reward.py`: `combine(thumb, behaviour, camera, camera_weight)` = sum(w*s) / max(sum(w), 1) with thumb 1.0, behaviour 0.7 (song replaced / chosen), camera = its measured weight. `CameraRewardModel` plugs into `run(..., reward_model=..., thumb_fn=...)`. Off by default.
+- Measured on synthetic worlds (`reports/step03c_signal_weighting_simulation.md`): weighting did not beat using the camera at full strength; reliability is poorly estimated from under ~150 songs with 12 features. Judge on real data (Step 3c) before turning it on.
+- Tried and removed: a per-person leniency offset in the bandit (no gain; see `rl/agent/bandit.py`).
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import statistics
 
@@ -22,7 +23,8 @@ GATE_MIN_SONGS = 40
 LIKE_CUTOFF = 0.0025   # the camera counts as "liked" above this calibrated liking (was 0; set by Adi: detect the faintest reaction)
 MIN_CONFIDENCE = 0.1   # same cut-off the bandit uses: below it nobody was really seen
 STRONG = 0.2           # a "clear" camera reaction: |calibrated liking| >= this
-FIELDS = ["user", "song_id", "thumb", "liking", "confidence", "emotion", "time"]
+FIELDS = ["user", "song_id", "thumb", "liking", "confidence", "emotion", "time",
+          "features", "setting", "group_size", "likes"]
 
 
 def load_rows(path, user=None):
@@ -33,7 +35,9 @@ def load_rows(path, user=None):
                 continue
             rows.append({"user": r["user"], "song_id": r["song_id"], "thumb": int(r["thumb"]),
                          "liking": float(r["liking"]) if r["liking"] not in ("", "None") else None,
-                         "confidence": float(r["confidence"] or 0), "emotion": r.get("emotion", "")})
+                         "confidence": float(r["confidence"] or 0), "emotion": r.get("emotion", ""),
+                         "features": json.loads(r["features"]) if r.get("features") else None,
+                         "setting": r.get("setting") or "", "group_size": int(r.get("group_size") or 1)})
     return rows
 
 
@@ -177,6 +181,75 @@ def personal_text(b):
     return f"{v}: per-person calibration, each song called by a rule that never saw it: {nums}."
 
 
+# ---------------------------------------------------------------- do richer camera features help? (Step 3c)
+# Gate fixed BEFORE any feature data was collected. Primary comparison = "all features" vs the old reading.
+C_MIN_SONGS = 60          # songs that have features
+C_MIN_PER_CLASS = 15      # of each thumb
+C_GATE_AUC = 0.70         # leave-one-out AUC of the all-features model
+C_GATE_GAIN = 0.05        # and at least this much better than the old reading (last 3 s of liking)
+
+
+def feature_sets():
+    from perception.emotion import clip_features as cf
+    return [("old reading (last 3 s liking)", ["last3_liking"]),
+            ("reaction dynamics (peak, range, build...)", cf.LIKING_FEATURES),
+            ("movement (nodding, head motion)", cf.MOTION_FEATURES),
+            ("all features", cf.FEATURES)]
+
+
+def compare_features(rows, iterations=200, boot=500, seed=0):
+    import random
+    from rl.agent import camera_model as cm
+    use = [r for r in rows if r.get("features") and r["liking"] is not None and r["confidence"] >= MIN_CONFIDENCE]
+    ups = sum(r["thumb"] for r in use)
+    out = {"n": len(use), "ups": ups, "downs": len(use) - ups, "sets": []}
+    if not use:
+        return {**out, "verdict": "NO FEATURE DATA"}
+    labels = [r["thumb"] for r in use]
+    probs_by = {}
+    for name, names in feature_sets():
+        _, probs = cm.loo_probs(use, names, iterations=iterations)
+        probs_by[name] = probs
+        out["sets"].append({"name": name, "auc": ev.auc(probs, labels), "n_features": len(names)})
+    a, d = out["sets"][0]["auc"], out["sets"][-1]["auc"]
+    out["gain"] = None if a is None or d is None else d - a
+    rng = random.Random(seed)
+    diffs = []
+    pa, pd = probs_by[out["sets"][0]["name"]], probs_by[out["sets"][-1]["name"]]
+    for _ in range(boot):
+        idx = [rng.randrange(len(use)) for _ in use]
+        yy = [labels[i] for i in idx]
+        if 0 < sum(yy) < len(yy):
+            diffs.append(ev.auc([pd[i] for i in idx], yy) - ev.auc([pa[i] for i in idx], yy))
+    diffs.sort()
+    out["gain_range"] = (diffs[int(0.025 * len(diffs))], diffs[int(0.975 * len(diffs)) - 1]) if len(diffs) > 20 else None
+    full = cm.CameraReliability().fit(use)
+    out["weights"] = sorted(full.w.items(), key=lambda kv: -abs(kv[1]))
+    by_setting = {}
+    for r, p in zip(use, probs_by["all features"]):
+        by_setting.setdefault(r.get("setting") or "untagged", []).append((p, r["thumb"]))
+    out["by_setting"] = {k: (len(v), ev.auc([x for x, _ in v], [y for _, y in v])) for k, v in by_setting.items()}
+    if len(use) < C_MIN_SONGS or min(out["ups"], out["downs"]) < C_MIN_PER_CLASS:
+        out["verdict"] = "NOT ENOUGH DATA"
+    elif d is not None and d >= C_GATE_AUC and out["gain"] is not None and out["gain"] >= C_GATE_GAIN:
+        out["verdict"] = "PASS"
+    else:
+        out["verdict"] = "FAIL"
+    return out
+
+
+def features_text(c):
+    v = c["verdict"]
+    if v == "NO FEATURE DATA":
+        return "No songs with movement/dynamics features yet. Run the collection tool again (Step 3c)."
+    sets = ", ".join(f"{s['name']}: AUC {_num(s['auc'])}" for s in c["sets"])
+    if v == "NOT ENOUGH DATA":
+        return (f"NOT ENOUGH DATA: {c['n']} songs with features ({c['ups']} up, {c['downs']} down); need {C_MIN_SONGS} songs "
+                f"with at least {C_MIN_PER_CLASS} of each thumb. So far (leave-one-out): {sets}.")
+    return (f"{v}: all-features AUC {_num(c['sets'][-1]['auc'])} (need {C_GATE_AUC:.2f}), "
+            f"gain over the old reading {c['gain']:+.3f} (need {C_GATE_GAIN:+.2f}). {sets}.")
+
+
 def verdict_text(a):
     v = a["verdict"]
     if v == "NO DATA":
@@ -219,6 +292,7 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
     from rl import report as rp
     a = analyse(rows)
     b = analyse_personal(rows)
+    c = compare_features(rows)
     lo, hi = a["ci"]
     parts = [f"# Step 3 report: camera vs thumbs agreement (P0.3)", "",
              f"- Generated: {rp.time.strftime('%Y-%m-%d %H:%M:%S')}  ", f"- Code: {rp.git_info()}  ",
@@ -253,7 +327,24 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
                  ["balanced accuracy", _pct(b["balanced"]), f"need {B_GATE_BALANCED:.0%}; catches liked: {_pct(b.get('tpr'))}, catches disliked: {_pct(b.get('tnr'))}"],
                  ["AUC", _num(b["auc"], 3), f"need {B_GATE_AUC:.2f}; 0.5 = chance"],
                  ["personal cut-off", _num(b.get("cut")), f"the general rule is {LIKE_CUTOFF}; a song counts as liked when the camera's calibrated liking is above this"]]), "",
-             "## 3. How the numbers were produced", "",
+             "## 2c. Do movement and reaction-dynamics features help? (Step 3c)", "",
+             f"**Result: {features_text(c)}**", ""]
+    if c["sets"]:
+        parts += [rp.md_table(["camera measurement used", "features", "AUC (each song scored by a model that never saw it)"],
+                              [[s_["name"], s_["n_features"], _num(s_["auc"], 3)] for s_ in c["sets"]]), ""]
+        if c.get("gain_range"):
+            parts += [f"Gain of 'all features' over the old reading: {c['gain']:+.3f}; 95% resampling range {c['gain_range'][0]:+.3f} to {c['gain_range'][1]:+.3f} "
+                      "(if the range includes 0, the gain could be noise).", ""]
+        parts += [rp.md_table(["feature (standardised)", "weight", "reading"],
+                              [[n_, f"{w:+.2f}", "raises P(liked)" if w > 0 else "lowers P(liked)"] for n_, w in c["weights"][:6]]),
+                  "", "Weights come from one fit on all songs and are descriptive only: with this few songs a single weight is not reliable.", "",
+                  rp.md_table(["setting", "songs", "AUC (all features)"],
+                              [[k, n_, _num(a_, 3)] for k, (n_, a_) in sorted(c["by_setting"].items())]), ""]
+        from rl.agent import camera_model as cm
+        wt, auc_, n_ = cm.reliability(rows)
+        parts += [f"**Camera weight for the learner:** {wt:.2f} (from AUC {_num(auc_, 3)} on {n_} songs; 0 = ignore the camera, 1 = trust it like a thumb). "
+                  f"A weight needs at least {cm.MIN_SONGS} songs with features and {cm.MIN_PER_CLASS} of each thumb; below that the camera is ignored.", ""]
+    parts += ["## 3. How the numbers were produced", "",
              "- **Collection:** songs from the gym and party moods play as 10-second iTunes previews. Before the first song the camera measures a resting baseline "
              "(neutral face, guarded against smiling or moving). At the end of each clip the camera reading is the average liking over the last 3 seconds, "
              "adjusted relative to that baseline so a neutral face is about 0. Then the person presses up or down.",
@@ -267,6 +358,12 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
              f"then shrunk toward {LIKE_CUTOFF} by n / (n + {PRIOR_STRENGTH:.0f}) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). "
              f"Gate set before it was run on any data: accuracy >= {B_GATE_ACCURACY:.0%}, balanced accuracy >= {B_GATE_BALANCED:.0%}, AUC >= {B_GATE_AUC:.2f}, "
              f"and at least {B_MIN_PER_CLASS} songs of the rarer thumb (otherwise nothing can be judged). Moving a cut-off cannot change the ranking of songs, so AUC stays low if the camera has no signal.", "",
+             "- **Step 3c (richer features):** per clip the tool records the reaction's mean, peak, low, range, build (last third minus first third) and last-3-seconds average; "
+             "the smile probability minus the resting smile; and face movement: speed of the face centre, vertical (nodding) speed, and the share of vertical movement in the 1 to 3.5 Hz head-bob band with its amplitude. "
+             "Movement and smile are measured against the person's own resting baseline from calibration. A logistic model per person (strong pull toward 'no effect', equal to "
+             f"{10} songs of evidence) turns the features into P(thumb up); every song is scored by a model fitted without it, and AUC is computed on those scores. "
+             f"Gate set before any feature data existed: at least {C_MIN_SONGS} songs with features and {C_MIN_PER_CLASS} of each thumb, all-features AUC >= {C_GATE_AUC:.2f}, and at least {C_GATE_GAIN:.2f} better than the old reading.",
+             "- **Camera weight:** 2 × (leave-one-out AUC − 0.5), between 0 and 1. It is the share of a thumb's influence the camera gets when the learner combines thumbs, skips and the camera.", "",
              "## 4. What these numbers do and do not show", "",
              f"- With {a['n_usable']} songs the 95% interval is about ±{(hi - lo) / 2 * 100:.0f} points; a score a few points either side of {GATE_ACCURACY:.0%} is not decisive.",
              "- One person, one room, gym and party songs only. It does not show the camera works for other people or other music.",
