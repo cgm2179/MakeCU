@@ -18,6 +18,15 @@ class FilterSource:
     source_value: str = ""
 
 
+class CandidatePool(list):
+    """A list of songs that also records where they came from: "database" (the Spotify dataset),
+    "hardcoded" (fallback list), later "playlist". Only database pools get the mainstream bias."""
+
+    def __init__(self, songs=(), source="unknown"):
+        super().__init__(songs)
+        self.source = source
+
+
 @dataclass(frozen=True)
 class Filter:
     sources: tuple = ()

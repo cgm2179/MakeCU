@@ -149,6 +149,10 @@ python3 -m integration.orchestrator.run_mood_demo --mood gym --rounds 60 --likes
 python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,emo --sweep 24   # many seeds
 ```
 
+## Mainstream Bias (well-known songs first)
+
+On the database (Spotify dataset) path, the first filter and the early picks lean toward well-known songs using the dataset's popularity score, so a mood like gym opens with recognizable tracks. Strength runs from 0 (off) to 1 (strong); default 0.5, set in `shared/config/defaults.py` or per run with `--mainstream-bias`. It has two parts: the mood pool is ranked by closeness to the target *plus* popularity, and the bandit adds a popularity prior that fades over its first ~10 rounds as it learns your taste. Exploration is kept, so less-known songs still appear and the bandit can find a niche taste. The pool is always topped up to full size, even for niche moods. It never applies to a user's own playlist: pools are tagged with their source (`database`, `hardcoded`, later `playlist`) and only `database` pools turn it on.
+
 ## Real Audio Playback (iTunes previews)
 
 `music/playback/audio.py` looks each chosen song up on the free iTunes Search API (no key; only the title and artist are sent), downloads its 30-second preview and plays it through the computer speaker (`afplay` on macOS, or `ffplay`/`mpv`). Playback is non-blocking, so the motion system is not held up. Songs with no matching preview are skipped and the bandit picks again; about 7 in 10 songs in the gym pool have one.

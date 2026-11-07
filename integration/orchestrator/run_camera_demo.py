@@ -39,13 +39,15 @@ def main():
     ap.add_argument("--bored", action="store_true", help="re-enable their stillness-based 'bored' label (off by default)")
     ap.add_argument("--audio", action="store_true", help="play iTunes previews; the reaction is read when the clip ends")
     ap.add_argument("--clip-seconds", type=float, default=6)
+    ap.add_argument("--mainstream-bias", type=float, default=None, metavar="0..1",
+                    help="lean toward well-known songs on the database path (default 0.5; 0 = off)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     if not dataset_available():
         raise SystemExit("Dataset missing. Run: python3 -m music.catalog.download_spotify")
 
-    pool = get_candidates(Filter((FilterSource("event", a.mood),)))
+    pool = get_candidates(Filter((FilterSource("event", a.mood),)), mainstream_bias=a.mainstream_bias)
     empty = {int(x) for x in a.empty.split(",") if x}
     if empty and not a.taste:
         raise SystemExit("--empty needs --taste (the plain mock model cannot remove faces)")
@@ -73,7 +75,7 @@ def main():
     try:
         out = run(a.songs, event=a.mood, seed=a.seed, pool=pool, feedback=feedback, player=player,
                   wait_for_playback=bool(player), listen_seconds=a.listen_seconds, round_delay=0,
-                  overrides={}, verbose=not a.quiet)
+                  overrides={}, verbose=not a.quiet, mainstream_bias=a.mainstream_bias)
     finally:
         if player:
             player.close()

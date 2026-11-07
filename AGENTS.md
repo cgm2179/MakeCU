@@ -91,6 +91,12 @@ Music topics are never consumed by motion, and the reverse.
 - Reward is still `group_liking * mean(confidence)`. If mean confidence is below `MIN_CONFIDENCE` (0.1) the bandit skips learning for that round (`info["skipped"]`), because a reward of 0 would pull the song's score toward 0.
 - In mock mode a thread feeds synthetic frames to the service; real phones or a webcam replace that later.
 
+## Mainstream Bias (implemented)
+
+- `get_candidates(filter, pool_size=500, mainstream_bias=None)` returns a `CandidatePool` (a list with `.source` = `"database"` | `"hardcoded"`; a future playlist path should return `source="playlist"`). Default strength is `shared.config.defaults.MAINSTREAM_BIAS` (0.5; 0 = off, 1 = strong).
+- Database path only: `select_pool` ranks by distance minus a popularity bonus (popularity floor is soft: lower-popularity songs top the pool up, so it is never short); `BanditAgent.mainstream_prior` adds a fading popularity prior while choosing. `run()` switches the prior on only when `pool.source == "database"`, so a user's own playlist is never biased.
+- Tradeoff measured on 16 seeds: strength 0.5 lifts early-pick popularity from ~47 to ~70-82 and costs a taste for unpopular genres ~8 points of learning (91% to 83%); strength 1.0 costs ~20.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |

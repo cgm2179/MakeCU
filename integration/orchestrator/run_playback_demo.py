@@ -23,17 +23,19 @@ def main():
     ap.add_argument("--songs", type=int, default=3, help="how many songs to actually play")
     ap.add_argument("--clip-seconds", type=float, default=10, help="play only the first N seconds (0 = full 30 s)")
     ap.add_argument("--likes", default="", help="genres the fake listener likes")
+    ap.add_argument("--mainstream-bias", type=float, default=None, metavar="0..1",
+                    help="lean toward well-known songs on the database path (default 0.5; 0 = off)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     if not dataset_available():
         raise SystemExit("Dataset missing. Run: python3 -m music.catalog.download_spotify")
 
-    pool = get_candidates(Filter((FilterSource("event", a.mood),)))
+    pool = get_candidates(Filter((FilterSource("event", a.mood),)), mainstream_bias=a.mainstream_bias)
     player = AudioPlayer(clip_seconds=a.clip_seconds or None)
     try:
         likes = [g for g in a.likes.split(",") if g] or ["pop"]
         out = run(a.songs, event=a.mood, seed=a.seed, pool=pool, player=player, wait_for_playback=True,
-                  listener=TasteListener(likes, seed=a.seed), overrides={}, round_delay=0)
+                  listener=TasteListener(likes, seed=a.seed), overrides={}, round_delay=0, mainstream_bias=a.mainstream_bias)
     finally:
         player.close()
     by_id = {x.song_id: x for x in pool}

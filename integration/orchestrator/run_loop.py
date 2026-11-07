@@ -48,13 +48,17 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
-        player=None, wait_for_playback=False, feedback=None, listen_seconds=2.0):
+        player=None, wait_for_playback=False, feedback=None, listen_seconds=2.0,
+        mainstream_bias=None):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
     listener     : fake listener with .react(song); default = SimulatedListener
     taste_shift  : {step: genres} changes a TasteListener's taste at that step
     player       : audio output (AudioPlayer); songs with no playable audio are skipped
+    mainstream_bias : 0..1 strength of the early lean toward well-known songs; None keeps the
+                   agent's own setting (default shared.config.defaults.MAINSTREAM_BIAS). Applies
+                   only when the pool came from the database path (pool.source == "database").
     wait_for_playback : wait for each clip to finish before taking the reaction
     feedback     : real reactions instead of a fake listener, e.g. CameraFeedback (starts its
                    perception service here). With audio the reaction is read at the end of
@@ -66,6 +70,11 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     pool = pool if pool is not None else get_candidates(flt)
     agent = agent or BanditAgent(seed=seed)
     controller = PlaylistController(pool, bus, player)
+    if mainstream_bias is not None:
+        agent.mainstream_bias = mainstream_bias
+    agent.mainstream_active = getattr(pool, "source", None) == "database"  # never for a user's playlist
+    if agent.mainstream_active and agent.mainstream_bias > 0:
+        say(f"Mainstream bias {agent.mainstream_bias:.2f}: leaning toward well-known songs early on (database pool)")
     phone = FakePhone(bus)
     if feedback is not None:
         listener = None
