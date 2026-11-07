@@ -1,13 +1,13 @@
 # Step 3 report: camera vs thumbs agreement (P0.3)
 
-- Generated: 2026-11-07 17:33:09  
-- Code: rl/eval-and-profiles @ ef90110 (+ uncommitted changes)  
+- Generated: 2026-11-07 17:44:44  
+- Code: rl/eval-and-profiles @ d3c1fc9  
 - Python 3.9.0 on Darwin  
 - User: adi
 
 ## 1. Unit tests: ALL PASSED
 
-- Ran 112 tests in 47.8s: 112 passed, 0 failed, 0 errors, 0 skipped.
+- Ran 112 tests in 48.3s: 112 passed, 0 failed, 0 errors, 0 skipped.
 - Skipped tests need the camera libraries or the Spotify CSV and are skipped on a plain Python install; a skip is not a pass.
 
 | test file | passed | failed | skipped |
@@ -29,39 +29,39 @@
 
 Data: this person's own thumbs up/down next to the camera's reading for the same songs.
 
-**Result: Only 39 usable songs (need 40); the result so far is 56%. Collect more before judging.**
+**Result: FAIL: the camera matched the thumb on 53% of 78 songs (gate 75%). Action: use the explicit thumbs as the training label and treat the camera only as a secondary signal.**
 
-- Songs rated: 40. Usable (a face was seen with confidence >= 0.1): 39. Excluded: 1.
+- Songs rated: 80. Usable (a face was seen with confidence >= 0.1): 78. Excluded: 2.
 
 |  | camera says like | camera says dislike |
 |---|---|---|
-| thumb UP | 2 | 2 |
-| thumb DOWN | 15 | 20 |
+| thumb UP | 14 | 6 |
+| thumb DOWN | 31 | 27 |
 
 | measure | value | what it means |
 |---|---|---|
-| agreement (accuracy) | 56% | share of songs where the camera's sign matched the thumb; 95% interval 41% to 71% |
-| always-guess-majority | 90% | what a camera that ignored your face and always said the more common thumb would score |
-| balanced accuracy | 54% | average of 'liked songs the camera caught' and 'disliked songs the camera caught'; fair when thumbs are lopsided |
-| kappa | 0.03 | agreement beyond chance: 0 = chance, 1 = perfect |
-| AUC of liking vs thumb | 0.493 | chance a liked song got a higher camera score than a disliked one; ignores the 0 cut-off |
-| clear reactions (liking at least 0.2 from 0, either way) | 56% of 9 | agreement when the camera was not near neutral |
-| mean liking, thumb UP | -0.06 | should be clearly above 0 |
-| mean liking, thumb DOWN | -0.02 | should be clearly below the thumb-UP mean |
+| agreement (accuracy) | 53% | share of songs where the camera's sign matched the thumb; 95% interval 42% to 63% |
+| always-guess-majority | 74% | what a camera that ignored your face and always said the more common thumb would score |
+| balanced accuracy | 58% | average of 'liked songs the camera caught' and 'disliked songs the camera caught'; fair when thumbs are lopsided |
+| kappa | 0.12 | agreement beyond chance: 0 = chance, 1 = perfect |
+| AUC of liking vs thumb | 0.674 | chance a liked song got a higher camera score than a disliked one; ignores the 0 cut-off |
+| clear reactions (liking at least 0.2 from 0, either way) | 71% of 14 | agreement when the camera was not near neutral |
+| mean liking, thumb UP | 0.09 | should be clearly above 0 |
+| mean liking, thumb DOWN | -0.01 | should be clearly below the thumb-UP mean |
 
 ## 2b. Re-test with a per-person calibration (Step 3b)
 
-**Result: NOT ENOUGH DATA: only 4 songs of the rarer thumb (4 up, 35 down); need 10 to judge. For reference, on this small sample: accuracy 62% (need 75%), balanced accuracy 45% (need 65%), AUC 0.49 (need 0.65).**
+**Result: FAIL: per-person calibration, each song called by a rule that never saw it: accuracy 63% (need 75%), balanced accuracy 64% (need 65%), AUC 0.67 (need 0.65).**
 
 The general rule ('liking > 0 = liked') was replaced by a rule fitted to this person's thumbs, starting from the general rule and held close to it when data is thin. Each song is predicted by a model that never saw that song (leave-one-out), so the score is not flattered by fitting and testing on the same songs.
 
 | measure | value | notes |
 |---|---|---|
-| usable songs | 39 | 4 thumb up, 35 thumb down |
-| accuracy (leave-one-out) | 62% | need 75%; always-majority scores 90% |
-| balanced accuracy | 45% | need 65%; catches liked: 25%, catches disliked: 66% |
-| AUC | 0.493 | need 0.65; 0.5 = chance |
-| personal cut-off | 0.03 | the general rule is 0.00; a song counts as liked when the camera's calibrated liking is above this |
+| usable songs | 78 | 20 thumb up, 58 thumb down |
+| accuracy (leave-one-out) | 63% | need 75%; always-majority scores 74% |
+| balanced accuracy | 64% | need 65%; catches liked: 65%, catches disliked: 62% |
+| AUC | 0.674 | need 0.65; 0.5 = chance |
+| personal cut-off | 0.04 | the general rule is 0.00; a song counts as liked when the camera's calibrated liking is above this |
 
 ## 3. How the numbers were produced
 
@@ -76,7 +76,7 @@ The general rule ('liking > 0 = liked') was replaced by a rule fitted to this pe
 
 ## 4. What these numbers do and do not show
 
-- With 39 songs the 95% interval is about ±15 points; a score a few points either side of 75% is not decisive.
+- With 78 songs the 95% interval is about ±11 points; a score a few points either side of 75% is not decisive.
 - One person, one room, gym and party songs only. It does not show the camera works for other people or other music.
 - The thumb is treated as the truth, but it is a noisy label too (people press the wrong button, or rate the song rather than how they felt).
 - If thumbs are lopsided (mostly up or mostly down), compare agreement with 'always-guess-majority' and look at balanced accuracy and kappa.
