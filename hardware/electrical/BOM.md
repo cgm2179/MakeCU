@@ -1,6 +1,6 @@
 # Bill of Materials
 
-The robot stands 1 to 1.5 ft (30–45 cm) tall and dances in place. It doesn't drive. A stepper turns the waist toward people, servos move the arms and tilt the head, and an 8×8 LED face shows the group's mood.
+The robot stands 1 to 1.5 ft (30–45 cm) tall and dances in place. It doesn't drive. A stepper turns the waist toward people, a second stepper turns the head, two SG90 servos wave the arms, and an 8×8 LED face shows the group's mood.
 
 The spreadsheet version is [`BOM.xlsx`](BOM.xlsx). Sheet 1 lists the components we have, and sheet 2 lists the parts that need CAD.
 
@@ -16,7 +16,7 @@ The UNO sits between the Pi and the motors because the Pi's software PWM makes s
 
 ## Components
 
-Status key: ✅ have · ⚠️ confirm · 🔁 backup · ↩️ return to desk · ❌ missing
+Status key: ✅ have · 🔁 backup · ↩️ return to desk · ❌ missing
 
 | ✓ | Component | Qty | Source | Purpose | Improvise if missing |
 |---|---|---|---|---|---|
@@ -28,8 +28,7 @@ Status key: ✅ have · ⚠️ confirm · 🔁 backup · ↩️ return to desk �
 | ✅ | USB A-B cable (blue) | 1 | Personal | Pi ↔ UNO serial and UNO power | — |
 | ✅ | ELEGOO 28BYJ-48 Stepper Motor | 2 | Desk order | #1 turns the waist toward the group; #2 turns the head left and right | — |
 | ✅ | ELEGOO ULN2003 Stepper Motor Driver | 2 | Desk order | One per stepper | — |
-| ⚠️ | Sunfounder 55 g Servo | 2 | Desk order | Left and right shoulders: raise and wave the arms to the beat. Not in the inventory photos, so confirm pickup | SG90s (weaker arms) |
-| ✅ | ELEGOO SG90 Micro Servo | 2 | 1 desk order + 1 personal | Head tilt (look up at faces) and one elbow | — |
+| ✅ | ELEGOO SG90 Micro Servo | 2 | 1 desk order + 1 personal | Left and right shoulders: wave the arms to the beat. Keep each arm under ~15 g | — |
 | ✅ | MAX7219 8×8 dot matrix module | 1 | Personal | Face that shows `group_emotion` | — |
 | ✅ | Sound sensor module (mic + pot) | 1 | Personal | Optional: beat detection so the arms dance in time | — |
 | ✅ | Bluetooth speaker | 1 | Personal | Plays music from the Pi; use AUX into the Pi's 3.5mm jack if it has one | — |
@@ -45,6 +44,8 @@ Status key: ✅ have · ⚠️ confirm · 🔁 backup · ↩️ return to desk �
 | ↩️ | Wheels | 1 | Desk order | Not needed: the robot doesn't drive | — |
 | ❌ | Camera #1 | 0 | — | Emotion + pose (`CAMERA_LEFT_INDEX`), mounted in the head | USB Cameras from the desk, or a phone as a webcam |
 | ❌ | Camera #2 | 0 | — | Second view for more people (`CAMERA_RIGHT_INDEX`) | Logitech Webcams (MLH desk), or a phone (Continuity Camera / DroidCam / Iriun) |
+| ❌ | Sunfounder 55 g Servo | 0 | On desk order 0-00038, not received | Would have given stronger shoulders | Ask the desk; otherwise the SG90s cover the shoulders |
+| ❌ | Extra micro servos (optional) | 0 | — | Head tilt and an elbow | **9G Micro Servo** (MLH desk); without them, fix the cameras ~10–15° up and skip elbows |
 | ❌ | USB-C wall charger (5V, 2.5A+) | 0 | — | Powers the Pi | Any phone charger; or a 2-port power bank (3A+ total) shared with the motors |
 | ❌ | Waist bearing | 0 | — | Carries the torso so the stepper only rotates it | 3D-printed ball-bearing ring, or a lazy susan / two smooth plates with washers |
 | ❌ | Chassis | 0 | — | Holds everything at 1–1.5 ft | See the CAD sheet; cardboard + hot glue as a fallback |
@@ -64,8 +65,8 @@ Not used: HC-SR04 ultrasonic, HC-SR501 PIR, MPU-9250 IMU, DS1307 RTC, rotary enc
 |---|---|
 | Waist stepper (ULN2003 #1) | D2, D3, D4, D5 |
 | Head-pan stepper (ULN2003 #2) | D6, D7, D8, D12 |
-| Left / right shoulder servo | D9, D10 |
-| Head-tilt SG90 / elbow SG90 | D11, A0 |
+| Left / right shoulder SG90 | D9, D10 |
+| Spare: head-tilt / elbow servo if you get more | D11, A0 |
 | MAX7219 face (DIN, CS, CLK) | A1, A2, A3 |
 | Sound sensor (AO) | A4 |
 
@@ -73,4 +74,4 @@ Libraries: `AccelStepper`, `Servo`, `LedControl`.
 
 ## Parts to CAD
 
-The full list with dimensions is in sheet 2 of [`BOM.xlsx`](BOM.xlsx). In short: a base that holds the speaker, power bank, Pi, UNO and both drivers; a waist turntable; the torso with two shoulder-servo pockets; two arms; a neck stepper mount; and a head with two angled camera mounts, the SG90 tilt hinge and a face window.
+The full list with dimensions is in sheet 2 of [`BOM.xlsx`](BOM.xlsx). In short: a base that holds the speaker, power bank, Pi, UNO and both drivers; a waist turntable; the torso with two SG90 shoulder pockets; two light arms; a neck stepper mount; and a head with two camera mounts angled outward and fixed ~10–15° up, plus a face window.
