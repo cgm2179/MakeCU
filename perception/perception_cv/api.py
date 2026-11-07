@@ -1,4 +1,4 @@
-"""Public entry points for the rest of the repo (see AGENTS.md: perception.get_group_reaction)."""
+"""Public entry points for the rest of the repo (see AGENTS.md: get_group_reaction)."""
 from __future__ import annotations
 import threading
 
@@ -38,5 +38,5 @@ def serve(service: PerceptionService, host: str = "0.0.0.0", port: int = 8000,
 
 def get_group_reaction(song_id: str) -> GroupReaction:
     if _service is None:
-        raise RuntimeError("perception not started: call perception.serve(...) first")
+        raise RuntimeError("perception_cv not started: call perception_cv.serve(...) first")
     return _service.get_group_reaction(song_id)

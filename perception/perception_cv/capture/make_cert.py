@@ -1,12 +1,13 @@
 """Self-signed cert so phones will allow camera access (browsers need HTTPS off localhost).
 
-    python -m perception.capture.make_cert            # uses this machine's LAN IP
-    python -m perception.capture.make_cert 192.168.1.20
+    python -m perception_cv.capture.make_cert            # uses this machine's LAN IP
+    python -m perception_cv.capture.make_cert 192.168.1.20
 """
 import datetime
 import ipaddress
 import sys
 from pathlib import Path
+from typing import Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,7 +17,7 @@ from cryptography.x509.oid import NameOID
 from .netutil import local_ip
 
 
-def main(ip: str | None = None, out_dir: str = "certs") -> None:
+def main(ip: Optional[str] = None, out_dir: str = "certs") -> None:
     ip = ip or local_ip()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, ip)])

@@ -1,0 +1,11 @@
+numpy
+# Keep exactly one OpenCV build: opencv-python (it has the GUI window for --camera).
+# deepface and retina-face also pull in opencv-contrib-python-headless; see README "Setup" to remove it.
+opencv-python==5.0.0.93
+fastapi
+uvicorn[standard]
+cryptography
+deepface
+tf-keras
+pytest
+httpx

@@ -1,4 +1,4 @@
-"""python -m perception [--mock] [--camera INDEX] [--cert certs/cert.pem --key certs/key.pem]"""
+"""python -m perception_cv [--mock] [--camera INDEX] [--cert certs/cert.pem --key certs/key.pem]"""
 import argparse
 import os
 

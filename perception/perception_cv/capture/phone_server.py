@@ -8,6 +8,7 @@ import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -34,7 +35,7 @@ def create_app(service: PerceptionService) -> FastAPI:
         return service.get_group_reaction(song_id).to_dict()
 
     @app.websocket("/ws")
-    async def ws(websocket: WebSocket, phone: str | None = None):
+    async def ws(websocket: WebSocket, phone: Optional[str] = None):
         await websocket.accept()
         phone_id = phone or uuid.uuid4().hex[:6]
         loop = asyncio.get_running_loop()

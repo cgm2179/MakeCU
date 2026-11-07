@@ -1,9 +1,0 @@
-numpy
-opencv-python
-fastapi
-uvicorn[standard]
-cryptography
-deepface
-tf-keras
-pytest
-httpx

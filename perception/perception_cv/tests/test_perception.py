@@ -5,14 +5,14 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from perception.capture.phone_server import create_app
-from perception.capture import local_camera
-from perception.config import PerceptionConfig
-from perception.emotion.base import Face
-from perception.emotion.mock_model import MockModel
-from perception.group.scoring import aggregate
-from perception.pipeline import PerceptionService
-from perception.types import PersonReaction
+from perception_cv.capture.phone_server import create_app
+from perception_cv.capture import local_camera
+from perception_cv.config import PerceptionConfig
+from perception_cv.emotion.base import Face
+from perception_cv.emotion.mock_model import MockModel
+from perception_cv.group.scoring import aggregate
+from perception_cv.pipeline import PerceptionService
+from perception_cv.types import PersonReaction
 
 
 def jpeg(w=320, h=240) -> bytes:

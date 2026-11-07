@@ -90,6 +90,7 @@ Music topics are never consumed by motion, and the reverse.
 | Module | Public entry point | Returns |
 |---|---|---|
 | perception | `get_group_reaction(song_id) -> GroupReaction` | all people seen by both cameras |
+| perception (camera package) | `perception_cv.serve(perception_cv.build_service(), background=True)`, then `perception_cv.get_group_reaction(song_id)` | lives in `perception/perception_cv/`; import name `perception_cv` (run from inside `perception/`); not wired into the loop yet |
 | perception | `get_user_motion() -> UserMotion` | current poses for motion |
 | rl | `choose_next_song(candidate_pool) -> NextSong` | agent's pick |
 | rl | `update(reaction: GroupReaction)` | learns from reward |

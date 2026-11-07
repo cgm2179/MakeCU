@@ -16,7 +16,7 @@ def _show_preview(frame) -> None:
             raise RuntimeError(
                 "OpenCV was installed without GUI support. In this venv, run "
                 "`python -m pip install --force-reinstall opencv-python`, "
-                "then restart perception."
+                "then restart perception_cv."
             ) from exc
         raise
 
