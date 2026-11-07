@@ -8,7 +8,8 @@ class Song:
     title: str
     artist: str
     genre: str
-    audio_features: dict = field(default_factory=dict)
+    audio_features: dict = field(default_factory=dict)  # e.g. {"energy": 0.8}
+    mood: str = ""  # e.g. "upbeat", "calm", "melancholy"
 
 
 @dataclass(frozen=True)
@@ -37,3 +38,10 @@ class GroupReaction:
     people: tuple
     group_liking: float  # [-1, 1]
     group_emotion: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ManualSongChange:
+    """The user picked a song from the phone. Goes to the music system only."""
+    song_id: str
+    timestamp: float = 0.0

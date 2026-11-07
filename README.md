@@ -134,6 +134,37 @@ Put these in `shared/schemas/` and `shared/bus/` early so everyone can build aga
 - Each module should run alone with mocked inputs.
 - Keep large files (datasets, models, CAD exports) out of git.
 
+## Real Song Data (Spotify Tracks Dataset)
+
+The song list comes from the Hugging Face dataset `maharshipandya/spotify-tracks-dataset` (about 114k rows, 80k unique tracks after cleaning). It is not stored in git. Download it once, then everything runs offline:
+
+```
+python3 -m music.catalog.download_spotify     # saves data/spotify/dataset.csv (20 MB)
+```
+
+Without the CSV the code falls back to a small hardcoded song list. The first filter maps a mood or activity to a target feature vector (valence and energy are the main axes) and keeps the 500 nearest songs. Moods: `sad`, `happy`, `gym`, `study`, `party`, `chill` (plus aliases like `workout`, `studying`). See `music/filter/mood_targets.py`.
+
+```
+python3 -m integration.orchestrator.run_mood_demo --mood gym --rounds 60 --likes punk-rock,emo
+python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,emo --sweep 24   # many seeds
+```
+
+## Real Audio Playback (iTunes previews)
+
+`music/playback/audio.py` looks each chosen song up on the free iTunes Search API (no key; only the title and artist are sent), downloads its 30-second preview and plays it through the computer speaker (`afplay` on macOS, or `ffplay`/`mpv`). Playback is non-blocking, so the motion system is not held up. Songs with no matching preview are skipped and the bandit picks again; about 7 in 10 songs in the gym pool have one.
+
+```
+python3 -m integration.orchestrator.run_playback_demo --mood gym --songs 3 --clip-seconds 10
+```
+
+## Try It (fake inputs, no hardware)
+
+```
+python3 -m integration.orchestrator.run_loop --simulate 25   # simulated listener + phone
+python3 -m integration.orchestrator.run_loop                 # you type l / d, or "m s6" for a phone song change
+python3 -m unittest rl.tests.test_bandit music.tests.test_playlist music.tests.test_dataset_pipeline music.tests.test_audio integration.tests.test_core_loop -v
+```
+
 ## Status
 
-Scaffolding only. No component code yet.
+Core loop runs end to end with fake inputs: contextual-bandit RL, playlist control with manual override, and a motion stub. Cameras, audio, motors, and the real database are not connected yet.
