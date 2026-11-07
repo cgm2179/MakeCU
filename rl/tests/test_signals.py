@@ -93,6 +93,20 @@ class TestCameraModel(unittest.TestCase):
         w, auc, _ = cm.reliability(synth_rows(120, auc_signal=False), iterations=150)
         self.assertLess(w, 0.25)
 
+    def test_no_signal_scores_about_chance_not_zero(self):
+        """Leave-one-out gives AUC near 0 for a signal-free model (a held-out liked song lowers the base rate);
+        stratified cross-validation must not."""
+        rows = synth_rows(60, auc_signal=False, rate=0.4, seed=3)
+        auc, _ = cm.cv_auc(rows, ["last3_liking"], iterations=100)
+        self.assertGreater(auc, 0.3)
+        self.assertLess(auc, 0.7)
+        # the artefact itself, for the record: a one-feature model fitted leaving each song out
+        loo = []
+        for i, r in enumerate(rows):
+            m = cm.CameraReliability(["last3_liking"], iterations=100).fit(rows[:i] + rows[i + 1:])
+            loo.append(m.prob(r["features"]))
+        self.assertLess(cm.ev.auc(loo, [r["thumb"] for r in rows]), auc - 0.1)
+
     def test_too_few_songs_means_the_camera_is_ignored(self):
         self.assertEqual(cm.reliability(synth_rows(20))[0], 0.0)
         rows = synth_rows(60, rate=0.05)                           # almost no liked songs

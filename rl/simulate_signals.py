@@ -107,7 +107,7 @@ def play(world, strategy, p_thumb, rm, seed, rounds=120):
     return auc, sum(picks[-20:]) / 20
 
 
-def simulate(catalog, seeds=8, p_thumbs=(0.0, 0.25, 1.0), warm=80, progress=print, seed0=200):
+def simulate(catalog, seeds=8, p_thumbs=(0.0, 0.25, 1.0), warm=80, progress=print, seed0=300):
     out = {(s, p): {"auc": [], "picks": []} for s in STRATEGIES for p in p_thumbs}
     weights, cam_aucs = [], []
     for seed in range(seed0, seed0 + seeds):
@@ -138,7 +138,7 @@ def to_markdown(runs, seeds, p_thumbs, rounds=120):
              "- 'camera as a thumb' is the old behaviour: the camera's call (reading above 0 = liked) counted as much as a thumb.", ""]
     for warm, (out, weights, cam_aucs) in sorted(runs.items()):
         lines += [f"# Camera model fitted on {warm} earlier songs with thumbs", "",
-                  f"Measured reliability: leave-one-out AUC {ms(cam_aucs)}, weight {ms(weights)} (0 = ignored, 1 = trusted like a thumb).", ""]
+                  f"Measured reliability: cross-validated AUC {ms(cam_aucs)}, weight {ms(weights)} (0 = ignored, 1 = trusted like a thumb).", ""]
         for metric, title in (("auc", "Ranking of unseen songs (AUC, 0.5 = chance)"), ("picks", "Share of its last 20 picks the listener really liked")):
             lines += [f"## {title}", "", "| how signals are used | " + " | ".join(f"thumbs on {int(p * 100)}% of songs" for p in p_thumbs) + " |",
                       "|---|" + "---|" * len(p_thumbs)]
@@ -149,8 +149,10 @@ def to_markdown(runs, seeds, p_thumbs, rounds=120):
               "- Version 1 turned the camera into a reward of 2p - 1. For a listener who likes 25% of songs that is about -0.5 on nearly every song, a constant push down. "
               "On its worlds (seeds 0 to 7), with thumbs on 25% of songs, the weighted camera's last-20 picks were liked 0.31 of the time against 0.52 for 'thumbs only' (spread about ±0.2). "
               "Version 2 measured the camera relative to the person's usual rate but scaled the two sides differently, which left a negative average (seeds 100 to 107: weighted 0.41, thumbs only 0.53). "
-              "Version 3 (this report) uses one symmetric scale so the camera's reward averages 0, and is run on fresh worlds (seeds 200 to 207) so it is not judged on the data it was designed on. "
-              "Three versions is already some tuning to a made-up world: treat the result as a check that nothing is broken, not as proof.", "",
+              "Version 3 used one symmetric scale so the camera's reward averages 0, and is run on fresh worlds (seeds 200 to 207) so it is not judged on the data it was designed on. "
+              "Version 3 was judged by leave-one-out scoring, which turned out to push weak-signal reliability toward 0 (a held-out liked song lowers the training base rate, so its own score falls). "
+              "Version 4 (this report) uses stratified 5-fold cross-validation, found by the real busy-session data (an AUC of 0.000 for a signal-free reading) and confirmed by a unit test, "
+              "and runs on fresh worlds (seeds 300 to 307). Four versions is already some tuning to a made-up world: treat the result as a check that nothing is broken, not as proof.", "",
               "## How to read this", "",
               "- 'camera weighted' scales the camera by its measured reliability, so a noisy camera cannot outvote a thumb; its rewards are small when the camera is weak.",
               "- Differences smaller than the ± spread are not real. The listener, noise levels and camera strength are assumptions."]

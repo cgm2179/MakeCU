@@ -79,20 +79,53 @@ class CameraReliability:
         return max(-1.0, min(1.0, (self.prob(feats) - b) / max(b, 1 - b)))
 
 
-def loo_probs(rows, feature_names=None, **kw):
-    """Probability for every song from a model fitted without that song."""
+def cv_probs(rows, feature_names=None, folds=5, seed=0, **kw):
+    """Out-of-fold probability for every song: stratified k-fold, each song scored by a model that never saw it.
+
+    Not leave-one-out: leaving a single song out shifts the training base rate by a fixed amount that depends
+    on that song's own label (a liked song lowers it), so when the features carry little signal the held-out
+    scores slide the WRONG way and AUC collapses toward 0. Stratified folds keep the training base rate the
+    same for every held-out song, so a model with no signal scores about 0.5, as it should."""
+    import random
     rows = [r for r in rows if r.get("features")]
-    return rows, [CameraReliability(feature_names, **kw).fit(rows[:i] + rows[i + 1:]).prob(r["features"])
-                  for i, r in enumerate(rows)]
+    rng = random.Random(seed)
+    idx = {1: [], 0: []}
+    for i, r in enumerate(rows):
+        idx[int(bool(r["thumb"]))].append(i)
+    fold_of = {}
+    for cls in idx:
+        rng.shuffle(idx[cls])
+        for k, i in enumerate(idx[cls]):
+            fold_of[i] = k % folds
+    probs = [0.0] * len(rows)
+    for f in range(folds):
+        train = [rows[i] for i in range(len(rows)) if fold_of[i] != f]
+        model = CameraReliability(feature_names, **kw).fit(train)
+        for i in range(len(rows)):
+            if fold_of[i] == f:
+                probs[i] = model.prob(rows[i]["features"])
+    return rows, probs
+
+
+def cv_auc(rows, feature_names=None, repeats=3, **kw):
+    """Mean AUC over several different fold assignments (and the rows used)."""
+    aucs = []
+    for rep in range(repeats):
+        use, probs = cv_probs(rows, feature_names, seed=rep, **kw)
+        a = ev.auc(probs, [r["thumb"] for r in use])
+        if a is not None:
+            aucs.append(a)
+    return (sum(aucs) / len(aucs) if aucs else None), use
 
 
 def reliability(rows, feature_names=None, **kw):
-    """(weight in [0, 1], leave-one-out AUC or None, number of songs used).
+    """(weight in [0, 1], cross-validated AUC or None, number of songs used).
     weight = 2 * (AUC - 0.5), clipped: AUC 0.5 (chance) -> 0, AUC 0.75 -> 0.5, AUC 1.0 -> 1."""
     use = [r for r in rows if r.get("features")]
     ups = sum(r["thumb"] for r in use)
     if len(use) < MIN_SONGS or min(ups, len(use) - ups) < MIN_PER_CLASS:
         return 0.0, None, len(use)
-    use, probs = loo_probs(use, feature_names, **kw)
-    auc = ev.auc(probs, [r["thumb"] for r in use])
+    auc, use = cv_auc(use, feature_names, **kw)
+    if auc is None:
+        return 0.0, None, len(use)
     return max(0.0, min(1.0, 2 * (auc - 0.5))), auc, len(use)

@@ -234,7 +234,8 @@ def main(argv=None):
         tests = run_unit_tests()
         rows = ag.load_rows(args.agreement, args.user)
         text = ag.build_agreement_report(rows, tests, args.user or "", synthetic=Path(args.agreement).stem == "demo")
-        path = write_report(args.step, "camera_agreement_demo" if Path(args.agreement).stem == "demo" else "camera_agreement", text)
+        stem = Path(args.agreement).stem
+        path = write_report(args.step, "camera_agreement" if stem == "adi" else f"camera_agreement_{stem}", text)
         print(f"Tests: ran {tests['ran']}, failed {tests['failed']}, errors {tests['errors']}, skipped {tests['skipped']}")
         print(ag.verdict_text(ag.analyse(rows)))
         print(f"Report written to {path}")
