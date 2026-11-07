@@ -10,6 +10,12 @@ brand-new chat.
 
 The full technical plan is in docs/THREE_LAYER_CHECKPOINTS.md. You do not need to read it.
 
+AFTER EVERY STEP Claude runs the unit tests and writes a report to reports/ (for example
+reports/step03_....md). It shows the test results, how well the algorithm performs, every
+number with how it was calculated, and what the numbers do not prove. To make one yourself:
+  python3 -m rl.report --step N [--labels data/ratings/adi.csv --user adi]
+(The reports/ folder is on branch rl/eval-and-profiles until that PR is merged.)
+
 Be honest in every rating. The model learns YOUR taste. If you rate songs to look cool or to
 help the robot, it will learn the wrong thing.
 
