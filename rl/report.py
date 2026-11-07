@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "reports"
 TEST_MODULES = [
     "rl.tests.test_bandit", "rl.tests.test_eval", "rl.tests.test_profile", "rl.tests.test_report",
+    "rl.tests.test_agreement",
     "music.tests.test_playlist", "music.tests.test_dataset_pipeline", "music.tests.test_audio",
     "music.tests.test_mainstream_bias", "music.tests.test_gemini_lookup",
     "integration.tests.test_core_loop", "integration.tests.test_camera_loop",
@@ -223,8 +224,21 @@ def main(argv=None):
     ap.add_argument("--step", type=int, required=True)
     ap.add_argument("--labels")
     ap.add_argument("--user")
+    ap.add_argument("--agreement", help="Step 3: CSV written by run_agreement_check")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
+
+    if args.agreement:  # Step 3 has its own body: camera vs thumbs
+        from rl import agreement as ag
+        print("Running unit tests...")
+        tests = run_unit_tests()
+        rows = ag.load_rows(args.agreement, args.user)
+        text = ag.build_agreement_report(rows, tests, args.user or "", synthetic=Path(args.agreement).stem == "demo")
+        path = write_report(args.step, "camera_agreement_demo" if Path(args.agreement).stem == "demo" else "camera_agreement", text)
+        print(f"Tests: ran {tests['ran']}, failed {tests['failed']}, errors {tests['errors']}, skipped {tests['skipped']}")
+        print(ag.verdict_text(ag.analyse(rows)))
+        print(f"Report written to {path}")
+        return 0 if tests["ok"] else 1
 
     from music.catalog.spotify_catalog import dataset_available, load_spotify
     if not dataset_available():

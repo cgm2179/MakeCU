@@ -1,12 +1,12 @@
 # Step 2 report: Evaluation harness and profile save/load
 
-- Generated: 2026-11-07 17:01:20  
-- Code: rl/eval-and-profiles @ 68af41c (+ uncommitted changes)  
+- Generated: 2026-11-07 17:05:49  
+- Code: rl/eval-and-profiles @ e81b3d6 (+ uncommitted changes)  
 - Python 3.9.0 on Darwin
 
 ## 1. Unit tests: ALL PASSED
 
-- Ran 98 tests in 9.7s: 89 passed, 0 failed, 0 errors, 9 skipped.
+- Ran 106 tests in 9.7s: 97 passed, 0 failed, 0 errors, 9 skipped.
 - Skipped tests need the camera libraries or the Spotify CSV and are skipped on a plain Python install; a skip is not a pass.
 
 | test file | passed | failed | skipped |
@@ -18,6 +18,7 @@
 | music.tests.test_gemini_lookup | 21 | 0 | 0 |
 | music.tests.test_mainstream_bias | 11 | 0 | 0 |
 | music.tests.test_playlist | 3 | 0 | 0 |
+| rl.tests.test_agreement | 8 | 0 | 0 |
 | rl.tests.test_bandit | 6 | 0 | 0 |
 | rl.tests.test_eval | 11 | 0 | 0 |
 | rl.tests.test_profile | 6 | 0 | 0 |
