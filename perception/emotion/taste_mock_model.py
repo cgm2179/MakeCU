@@ -12,6 +12,7 @@ from perception.emotion.camera_reaction import import_perception_cv
 
 LIKED = {"happy": 0.80, "neutral": 0.12, "surprise": 0.08}
 DISLIKED = {"angry": 0.45, "sad": 0.35, "neutral": 0.20}
+RESTING = {"sad": 0.45, "neutral": 0.35, "angry": 0.20}  # like a real resting face: reads mildly negative
 
 
 class TasteMockModel:
@@ -24,9 +25,11 @@ class TasteMockModel:
         self.rng = random.Random(seed)
         self.person_likes = [False] * n_faces
         self.present = True
+        self.resting = True  # until the first song starts
 
     def set_song(self, song, present=True) -> None:
         self.present = present
+        self.resting = False
         liked = bool(self.likes(song))
         self.person_likes = [liked != (self.rng.random() < self.noise) for _ in range(self.n)]
 
@@ -38,6 +41,6 @@ class TasteMockModel:
         faces = []
         for i in range(self.n):
             cx = w * (0.3 + 0.4 * i / max(self.n - 1, 1))
-            probs = dict(LIKED if self.person_likes[i] else DISLIKED)
+            probs = dict(RESTING if self.resting else LIKED if self.person_likes[i] else DISLIKED)
             faces.append(self._Face((int(cx - fw / 2), int(h * 0.4), fw, fw), probs, 0.9))
         return faces

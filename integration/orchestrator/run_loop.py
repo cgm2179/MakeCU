@@ -71,6 +71,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         listener = None
         if hasattr(feedback, "start"):
             feedback.start()  # perception service runs in the background from here on
+        if getattr(feedback, "calibrate_seconds", 0) > 0:
+            feedback.calibrate(say=say)  # measure the resting baseline before any music
     elif listener is None and simulate_rounds:
         listener = SimulatedListener(seed=seed or 0)
     if overrides is None:
@@ -144,6 +146,15 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             shares = {k: round(v, 2) for k, v in sorted(reaction.group_emotion.items(), key=lambda kv: -kv[1]) if v}
             say(f"  camera reaction: people={len(reaction.people)}, group_liking={reaction.group_liking:+.2f}, "
                 f"mean confidence={mean_confidence(reaction):.2f}, emotions={shares}")
+            cal = getattr(feedback, "last_calibration", None)
+            if cal:
+                base = f"{cal['baseline']:+.2f}" if cal["baseline"] is not None else "none"
+                win = f" (avg of last {cal['window']:.0f} s)" if cal["window"] else ""
+                say(f"  liking: raw {cal['raw']:+.2f}{win} | baseline {base} | calibrated {cal['calibrated']:+.2f}  <- this is what the bandit gets")
+                tr = cal["trace"]
+                if tr:
+                    mix = ", ".join(f"{e} {v:.0%}" for e, v in list(tr["emotions"].items())[:4])
+                    say(f"  across the whole clip (calibrated): peak {tr['peak']:+.2f}, low {tr['low']:+.2f}, avg {tr['mean']:+.2f}; emotions: {mix}")
             for pr in reaction.people:
                 say(f"    person {pr.person_id}: emotion={pr.emotion}, liking={pr.liking:+.2f}, "
                     f"confidence={pr.confidence:.2f}")

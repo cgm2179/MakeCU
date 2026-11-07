@@ -33,7 +33,10 @@ def main():
     ap.add_argument("--empty", default="", help="comma-separated rounds with nobody in view, e.g. 4,9 (needs --taste)")
     ap.add_argument("--real", action="store_true", help="REAL webcam + DeepFace instead of mock (no fallback to mock)")
     ap.add_argument("--camera", type=int, default=0, help="webcam index to try first with --real (then 1, 2, 3)")
-    ap.add_argument("--detector", default="opencv", help="DeepFace detector with --real (their default is opencv; yunet is more reliable)")
+    ap.add_argument("--detector", default="yunet", help="DeepFace detector with --real (yunet found a laptop-webcam face; their default 'opencv' did not)")
+    ap.add_argument("--calibrate-seconds", type=float, default=8, help="resting-baseline calibration before the first song (--real); 0 = off")
+    ap.add_argument("--window", type=float, default=3.0, help="average the reaction over the last N seconds of the clip (--real); 0 = single instant")
+    ap.add_argument("--bored", action="store_true", help="re-enable their stillness-based 'bored' label (off by default)")
     ap.add_argument("--audio", action="store_true", help="play iTunes previews; the reaction is read when the clip ends")
     ap.add_argument("--clip-seconds", type=float, default=6)
     ap.add_argument("--seed", type=int, default=0)
@@ -48,7 +51,8 @@ def main():
         raise SystemExit("--empty needs --taste (the plain mock model cannot remove faces)")
     liked = lambda song: song.audio_features["valence"] >= 0.7
     if a.real:
-        feedback = CameraFeedback(mock=False, camera_index=a.camera, detector=a.detector)
+        feedback = CameraFeedback(mock=False, camera_index=a.camera, detector=a.detector, enable_bored=a.bored,
+                                  calibrate_seconds=a.calibrate_seconds, read_window_seconds=a.window)
         print(f"REAL camera (index {a.camera} first) + DeepFace, detector '{a.detector}'. No mock fallback.")
     elif a.taste:
         from perception.emotion.taste_mock_model import TasteMockModel

@@ -13,6 +13,30 @@ from music.catalog.songs import SONGS
 HAVE_DEPS = all(importlib.util.find_spec(m) for m in ("cv2", "fastapi", "uvicorn", "numpy"))
 
 
+from perception.emotion.camera_reaction import calibrate_liking
+
+
+class TestCalibrationMath(unittest.TestCase):
+    def test_baseline_maps_to_zero_and_extremes_stay_at_extremes(self):
+        for b in (-0.6, -0.3, 0.0, 0.4):
+            self.assertAlmostEqual(calibrate_liking(b, b), 0.0)
+            self.assertAlmostEqual(calibrate_liking(1.0, b), 1.0)
+            self.assertAlmostEqual(calibrate_liking(-1.0, b), -1.0)
+
+    def test_monotonic_and_signs(self):
+        b = -0.45  # a resting face reads mildly negative
+        xs = [-1, -0.8, -0.45, -0.2, 0.3, 0.9]
+        ys = [calibrate_liking(x, b) for x in xs]
+        self.assertEqual(ys, sorted(ys))
+        self.assertLess(calibrate_liking(-0.8, b), 0)   # worse than resting -> negative
+        self.assertGreater(calibrate_liking(-0.2, b), 0)  # better than resting -> positive, even though raw is negative
+
+    def test_extreme_baselines_do_not_divide_by_zero(self):
+        for b in (-1.0, 1.0):
+            for raw in (-1.0, 0.0, 1.0):
+                self.assertTrue(-1.0 <= calibrate_liking(raw, b) <= 1.0)
+
+
 class Recording:
     """Wraps a CameraFeedback and keeps every reaction the loop read from the perception service."""
 
@@ -83,6 +107,57 @@ class TestCameraLoop(unittest.TestCase):
         print(f"\n  songs the faces liked: first 10 {early:.0%} -> last 10 {late:.0%} (random: 25%)")
         self.assertGreater(late, early + 0.2)
         self.assertGreaterEqual(late, 0.6)
+
+
+@unittest.skipUnless(HAVE_DEPS, "camera package dependencies not installed")
+class TestCalibratedSignal(unittest.TestCase):
+    def make(self, **kw):
+        from perception.emotion.camera_reaction import CameraFeedback
+        from perception.emotion.taste_mock_model import TasteMockModel
+
+        liked = lambda s: s.genre == "jazz"
+        return CameraFeedback(model=TasteMockModel(liked, noise=0.0), **kw), liked
+
+    def test_defaults_are_yunet_and_bored_disabled(self):
+        from perception.emotion.camera_reaction import CameraFeedback
+
+        self.assertEqual(CameraFeedback().detector, "yunet")
+        fb, _ = self.make()
+        fb.start()
+        try:
+            self.assertFalse(fb.service.cfg.ENABLE_BORED)  # their stillness-based "bored" rule is off
+        finally:
+            fb.stop()
+
+    def test_resting_face_calibrates_to_zero_and_reactions_stand_out(self):
+        fb, liked = self.make(read_window_seconds=0.6)
+        fb.start()
+        try:
+            base = fb.calibrate(seconds=4, say=lambda *a: None)
+            self.assertTrue(-0.8 < base < -0.2, base)          # a resting face reads negative
+            self.assertAlmostEqual(fb._cal(base), 0.0)         # ...and calibrates to zero
+            jazz = next(x for x in SONGS if liked(x))
+            other = next(x for x in SONGS if not liked(x))
+            fb.begin_song(jazz); import time; time.sleep(1.3)
+            up = fb.get_group_reaction("up")
+            fb.begin_song(other); time.sleep(1.3)
+            down = fb.get_group_reaction("down")
+        finally:
+            fb.stop()
+        print(f"\n  baseline {base:+.2f} -> liked song scores {up.group_liking:+.2f}, disliked song {down.group_liking:+.2f}")
+        self.assertGreater(up.group_liking, 0.5)
+        self.assertLess(down.group_liking, -0.3)
+        self.assertGreater(up.group_liking, down.group_liking + 0.8)
+
+    def test_calibration_fails_loudly_if_nobody_is_in_view(self):
+        fb, _ = self.make(empty_rounds={1})
+        fb.start()
+        try:
+            fb.begin_song(SONGS[0])  # round 1 = nobody in view
+            with self.assertRaisesRegex(RuntimeError, "Calibration failed"):
+                fb.calibrate(seconds=3, say=lambda *a: None)
+        finally:
+            fb.stop()
 
 
 class TestFakeListenerStillWorks(unittest.TestCase):

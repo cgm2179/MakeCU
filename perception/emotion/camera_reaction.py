@@ -10,7 +10,10 @@ perception/perception_cv/README.md), so run the loop with a Python that has them
 """
 from __future__ import annotations
 
+import collections
+import dataclasses
 import socket
+import statistics
 import sys
 import threading
 import time
@@ -26,6 +29,20 @@ def import_perception_cv():
     import perception_cv
 
     return perception_cv
+
+
+MIN_SAMPLE_CONFIDENCE = 0.1
+
+
+def calibrate_liking(raw: float, baseline: float) -> float:
+    """Score a liking relative to a resting baseline: baseline -> 0, +1 stays +1, -1 stays -1.
+
+    A resting face reads negative on this model (e.g. -0.4), so subtracting the baseline puts a
+    neutral face near 0 and only real changes move the result. Piecewise-linear so the full
+    -1..+1 range is still reachable whatever the baseline is."""
+    b = max(-0.95, min(0.95, baseline))
+    out = (raw - b) / (1 - b) if raw >= b else (raw - b) / (1 + b)
+    return max(-1.0, min(1.0, out))
 
 
 def _free_port() -> int:
@@ -48,11 +65,20 @@ class CameraFeedback:
                  exact error (it never falls back to mock).
     empty_rounds : rounds (1-based) in which nobody is "in view", to test the empty case
                  (needs a model that supports it, like TasteMockModel).
+    detector   : DeepFace face detector, default "yunet" (the "opencv" Haar detector did not find
+                 a face on a laptop webcam; "ssd"/"opencv" also need OpenCV 4, not 5).
+    enable_bored : their "bored" label is a stillness timer, not a model output, and it drifts
+                 negative the longer someone sits still. Off by default (ENABLE_BORED=False).
+    calibrate_seconds : if > 0, run() calls calibrate() before the first song. It measures the
+                 person's resting liking and every later reaction is scored relative to it.
+    read_window_seconds : if > 0, the reaction handed to the bandit is the average liking over
+                 the last N seconds instead of a single instant (a smile that fades just before
+                 the clip ends would otherwise be missed).
     """
 
-    def __init__(self, mock=True, model=None, host="127.0.0.1", port=None, detector="opencv",
+    def __init__(self, mock=True, model=None, host="127.0.0.1", port=None, detector="yunet",
                  feed_fps=20, empty_rounds=(), camera_index=None, fallback_indices=(1, 2, 3),
-                 max_width=640):
+                 max_width=640, enable_bored=False, calibrate_seconds=0.0, read_window_seconds=0.0):
         self.mock, self.model, self.host, self.port = mock, model, host, port
         self.camera_index, self.fallback_indices = camera_index, tuple(fallback_indices)
         self.max_width = max_width  # frames are shrunk to this width before the model sees them
@@ -68,6 +94,14 @@ class CameraFeedback:
         self._stop = threading.Event()
         self._round = 0
         self.feeder_error: Exception | None = None
+        self.enable_bored = enable_bored
+        self.calibrate_seconds, self.read_window_seconds = calibrate_seconds, read_window_seconds
+        self.baseline: float | None = None
+        self.baseline_std = 0.0
+        self.last_calibration: dict | None = None
+        self._samples = collections.deque(maxlen=3000)  # (time, raw group_liking, dominant emotion)
+        self._sampler = None
+        self._clip_start = time.time()
 
     def start(self) -> None:
         if self.server is not None:  # already started
@@ -77,12 +111,15 @@ class CameraFeedback:
             self._open_webcam()  # fail fast, before loading the model or starting the server
             if self.model is None:
                 self._check_detector()
+        from perception_cv.config import PerceptionConfig
+
+        cfg = PerceptionConfig(ENABLE_BORED=self.enable_bored)
         if self.model is not None:
             from perception_cv.pipeline import PerceptionService
 
-            self.service = PerceptionService(self.model)
+            self.service = PerceptionService(self.model, cfg)
         else:
-            self.service = pcv.build_service(mock=self.mock, detector=self.detector)
+            self.service = pcv.build_service(mock=self.mock, detector=self.detector, cfg=cfg)
         self.server = pcv.serve(self.service, host=self.host, port=self.port or _free_port(),
                                 background=True)
         for _ in range(100):  # wait up to 10 s for the server thread to come up
@@ -97,6 +134,50 @@ class CameraFeedback:
         elif self.mock or self.model is not None:
             self._feeder = threading.Thread(target=self._feed_frames, daemon=True)
             self._feeder.start()
+        self._sampler = threading.Thread(target=self._sample_loop, daemon=True)
+        self._sampler.start()
+
+    # ---- sampling, calibration, calibrated reading ----
+    def _sample_loop(self) -> None:
+        """~10 samples a second of the raw group reaction, for calibration and windowed reads."""
+        while not self._stop.is_set():
+            r = self._pcv.get_group_reaction("sample")
+            conf = [p.confidence for p in r.people]
+            if conf and sum(conf) / len(conf) >= MIN_SAMPLE_CONFIDENCE:
+                self._samples.append((time.time(), r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
+            time.sleep(0.1)
+
+    def calibrate(self, seconds: float | None = None, say=print, discard: float = 2.0) -> float:
+        """Measure the resting liking: the person sits with a relaxed, neutral face (no music).
+        The first `discard` seconds are thrown away while the tracker's smoothing settles; the
+        median of the rest is the baseline."""
+        seconds = seconds or self.calibrate_seconds
+        say(f"Calibrating: sit with a relaxed, NEUTRAL face for {seconds:.0f} s (first {discard:.0f} s ignored)...")
+        start = time.time()
+        time.sleep(seconds)
+        vals = [lk for t, lk, _ in list(self._samples) if t >= start + discard]
+        if len(vals) < 10:
+            raise RuntimeError(f"Calibration failed: your face was seen in only {len(vals)} samples. "
+                               "Face the camera, check the lighting, and retry.")
+        self.baseline = statistics.median(vals)
+        self.baseline_std = statistics.pstdev(vals)
+        say(f"Baseline resting liking = {self.baseline:+.2f}  (spread {self.baseline_std:.2f}, {len(vals)} samples)")
+        if self.baseline_std > 0.25:
+            say("  warning: your resting reading moved a lot during calibration; hold still and neutral for a cleaner baseline")
+        return self.baseline
+
+    def _cal(self, raw: float) -> float:
+        return raw if self.baseline is None else calibrate_liking(raw, self.baseline)
+
+    def clip_trace(self) -> dict | None:
+        """Calibrated liking over the current clip: peak, low, mean, and the emotion mix."""
+        rows = [x for x in list(self._samples) if x[0] >= self._clip_start]
+        if not rows:
+            return None
+        cal = [self._cal(lk) for _, lk, _ in rows]
+        mix = collections.Counter(e for _, _, e in rows)
+        return {"n": len(rows), "peak": max(cal), "low": min(cal), "mean": sum(cal) / len(cal),
+                "emotions": {e: c / len(rows) for e, c in mix.most_common()}}
 
     # ---- real webcam ----
     def _open_webcam(self) -> None:
@@ -188,15 +269,31 @@ class CameraFeedback:
     def begin_song(self, song) -> None:
         """Called when a song starts (lets a taste-aware mock model know what is playing)."""
         self._round += 1
+        self._clip_start = time.time()
         if hasattr(self.model, "set_song"):
             self.model.set_song(song, present=self._round not in self.empty_rounds)
 
     def get_group_reaction(self, song_id: str, phone=None):
         """The group's current reaction (smoothed over the last fraction of a second)."""
-        return self._pcv.get_group_reaction(song_id)
+        live = self._pcv.get_group_reaction(song_id)
+        self.last_calibration = None
+        if not live.people or (self.baseline is None and self.read_window_seconds <= 0):
+            return live  # nobody in view (confidence 0 -> the bandit skips it), or nothing to adjust
+        raw = live.group_liking
+        if self.read_window_seconds > 0:
+            recent = [lk for t, lk, _ in list(self._samples) if t >= time.time() - self.read_window_seconds]
+            if recent:
+                raw = sum(recent) / len(recent)
+        cal = self._cal(raw)
+        people = [dataclasses.replace(p, liking=self._cal(p.liking)) for p in live.people]
+        self.last_calibration = {"raw": raw, "baseline": self.baseline, "calibrated": cal,
+                                 "window": self.read_window_seconds, "trace": self.clip_trace()}
+        return dataclasses.replace(live, group_liking=cal, people=people)
 
     def stop(self) -> None:
         self._stop.set()
+        if self._sampler is not None:
+            self._sampler.join(timeout=2)
         if self._feeder is not None:
             self._feeder.join(timeout=5)
         if self._cap is not None:
