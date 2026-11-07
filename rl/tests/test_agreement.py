@@ -113,3 +113,54 @@ class TestCollect(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPersonCalibrator(unittest.TestCase):
+    def test_no_signal_is_not_called_a_pass(self):
+        import random
+        rng = random.Random(1)
+        rows = rows_from([int(rng.random() < 0.4) for _ in range(60)], [rng.uniform(-.3, .3) for _ in range(60)])
+        b = ag.analyse_personal(rows)
+        self.assertNotEqual(b["verdict"], "PASS")
+
+    def test_real_signal_with_a_shifted_threshold_is_found(self):
+        # this person only shows a reaction above +0.1, and likes 40% of songs
+        import random
+        rng = random.Random(2)
+        thumbs = [int(rng.random() < 0.4) for _ in range(80)]
+        lik = [(0.3 if t else -0.05) + rng.uniform(-.1, .1) for t in thumbs]
+        b = ag.analyse_personal(rows_from(thumbs, lik))
+        self.assertEqual(b["verdict"], "PASS")
+        self.assertGreater(b["auc"], 0.9)
+
+    def test_too_few_liked_songs_means_not_enough_data(self):
+        rows = rows_from([1] * 4 + [0] * 36, [.5] * 4 + [-.2] * 36)
+        self.assertEqual(ag.analyse_personal(rows)["verdict"], "NOT ENOUGH DATA")
+        self.assertIn("rarer thumb", ag.personal_text(ag.analyse_personal(rows)))
+
+    def test_with_little_data_it_stays_close_to_the_general_rule(self):
+        cal = ag.PersonCalibrator().fit(rows_from([1, 1, 0, 0], [.9, .8, .6, .5]))   # best raw cut-off is 0.7
+        self.assertAlmostEqual(cal.raw_cut, 0.7)
+        self.assertLess(cal.cut, 0.25)                                               # 4 songs barely move it from 0
+        big = ag.PersonCalibrator().fit(rows_from([1, 1, 0, 0] * 50, [.9, .8, .6, .5] * 50))
+        self.assertGreater(big.cut, 0.5)                                             # lots of data moves it nearly all the way
+
+
+class TestSmartOrder(unittest.TestCase):
+    def test_mixes_likely_liked_songs_with_random_ones(self):
+        jazz = [Song(f"j{i}", "t", f"a{i}", "jazz", {"energy": .3}, "calm") for i in range(20)]
+        rock = [Song(f"r{i}", "t", f"b{i}", "rock", {"energy": .9}, "aggressive") for i in range(20)]
+        by_id = {s.song_id: s for s in jazz + rock}
+        prior = rows_from([1, 1, 0, 0], [0, 0, 0, 0])
+        prior[0]["song_id"], prior[1]["song_id"], prior[2]["song_id"], prior[3]["song_id"] = "j0", "j1", "r0", "r1"
+        order = rc.smart_order(jazz + rock, prior, by_id, seed=0)
+        first10 = [s.song_id for s in order[:10]]
+        self.assertGreaterEqual(sum(1 for i in first10 if i.startswith("j")), 5)   # liked-genre songs lead
+        self.assertTrue({"j0", "j1", "r0", "r1"}.isdisjoint(first10))               # rated songs not repeated
+        self.assertEqual(len({s.song_id for s in order}), len(order))               # no duplicates
+
+    def test_without_liked_songs_it_falls_back_to_all_unrated(self):
+        songs = [Song(f"s{i}", "t", "a", "pop", {}, "") for i in range(5)]
+        prior = [dict(rows_from([0], [0])[0], song_id="s0")]
+        order = rc.smart_order(songs, prior, {s.song_id: s for s in songs})
+        self.assertEqual([s.song_id for s in order], ["s1", "s2", "s3", "s4"])

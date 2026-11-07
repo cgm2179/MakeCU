@@ -91,6 +91,91 @@ def analyse(rows):
     return out
 
 
+# ---------------------------------------------------------------- per-person calibration (Step 3b)
+# The general rule says "camera liking > 0 means liked". People differ: some show a liked song with a
+# tiny smile, some barely react. PersonCalibrator keeps the general rule as the starting point and shifts
+# the cut-off to where THIS person's thumbs say it belongs (the cut-off that best catches both their liked
+# and disliked songs), but only as far as their data justifies: the shift is shrunk toward 0 when there are
+# few songs. A shifted cut-off can change accuracy but never the ranking of songs, so it cannot create signal.
+PRIOR_STRENGTH = 10.0  # the general rule counts as this many songs of evidence
+# Gate for the per-person version, fixed BEFORE it was run on any data:
+B_GATE_ACCURACY = 0.75     # same as the original gate
+B_GATE_BALANCED = 0.65     # and it must catch both liked and disliked songs, not just the common one
+B_GATE_AUC = 0.65          # and rank liked songs above disliked ones clearly better than chance
+B_MIN_PER_CLASS = 10       # the rarer thumb must have at least this many songs, or nothing can be judged
+
+
+def _balanced(rows, cut):
+    ups = [r for r in rows if r["thumb"]]
+    downs = [r for r in rows if not r["thumb"]]
+    parts = []
+    if ups:
+        parts.append(sum(1 for r in ups if r["liking"] > cut) / len(ups))
+    if downs:
+        parts.append(sum(1 for r in downs if r["liking"] <= cut) / len(downs))
+    return statistics.mean(parts) if parts else 0.0
+
+
+class PersonCalibrator:
+    """A personal cut-off on the camera's calibrated liking, starting from the general rule (cut-off 0)."""
+
+    def __init__(self, strength=PRIOR_STRENGTH):
+        self.strength, self.cut, self.raw_cut = strength, 0.0, 0.0
+
+    def fit(self, rows):
+        vals = sorted({r["liking"] for r in rows})
+        cands = [0.0] + [(a + b) / 2 for a, b in zip(vals, vals[1:])]
+        # best balanced accuracy; ties go to the candidate nearest the general rule
+        self.raw_cut = max(cands, key=lambda c: (round(_balanced(rows, c), 9), -abs(c)))
+        self.cut = self.raw_cut * len(rows) / (len(rows) + self.strength)
+        return self
+
+    def says_like(self, liking):
+        return liking > self.cut
+
+
+def leave_one_out(rows):
+    """Fit on all but one song, call that song; repeat for every usable song."""
+    use = usable(rows)
+    calls = [PersonCalibrator().fit(use[:i] + use[i + 1:]).says_like(r["liking"]) for i, r in enumerate(use)]
+    return use, calls
+
+
+def analyse_personal(rows):
+    use, calls = leave_one_out(rows)
+    n = len(use)
+    ups = sum(r["thumb"] for r in use)
+    downs = n - ups
+    out = {"n_usable": n, "ups": ups, "downs": downs}
+    if n == 0:
+        return {**out, "verdict": "NO DATA", "accuracy": None, "balanced": None, "auc": None}
+    ok = [bool(c) == bool(r["thumb"]) for c, r in zip(calls, use)]
+    tpr = sum(1 for o, r in zip(ok, use) if o and r["thumb"]) / ups if ups else None
+    tnr = sum(1 for o, r in zip(ok, use) if o and not r["thumb"]) / downs if downs else None
+    out.update({"accuracy": sum(ok) / n, "balanced": statistics.mean(x for x in (tpr, tnr) if x is not None),
+                "tpr": tpr, "tnr": tnr, "auc": ev.auc([r["liking"] for r in use], [r["thumb"] for r in use]),
+                "majority": max(ups, downs) / n, "cut": PersonCalibrator().fit(use).cut})
+    if min(ups, downs) < B_MIN_PER_CLASS:
+        out["verdict"] = "NOT ENOUGH DATA"
+    elif out["accuracy"] >= B_GATE_ACCURACY and out["balanced"] >= B_GATE_BALANCED and (out["auc"] or 0) >= B_GATE_AUC:
+        out["verdict"] = "PASS"
+    else:
+        out["verdict"] = "FAIL"
+    return out
+
+
+def personal_text(b):
+    v = b["verdict"]
+    if v == "NO DATA":
+        return "No usable songs."
+    nums = (f"accuracy {_pct(b['accuracy'])} (need {B_GATE_ACCURACY:.0%}), balanced accuracy {_pct(b['balanced'])} "
+            f"(need {B_GATE_BALANCED:.0%}), AUC {_num(b['auc'])} (need {B_GATE_AUC:.2f})")
+    if v == "NOT ENOUGH DATA":
+        return (f"NOT ENOUGH DATA: only {min(b['ups'], b['downs'])} songs of the rarer thumb "
+                f"({b['ups']} up, {b['downs']} down); need {B_MIN_PER_CLASS} to judge. For reference, on this small sample: {nums}.")
+    return f"{v}: per-person calibration, each song called by a rule that never saw it: {nums}."
+
+
 def verdict_text(a):
     v = a["verdict"]
     if v == "NO DATA":
@@ -132,6 +217,7 @@ def format_text(a):
 def build_agreement_report(rows, tests, user="", synthetic=False):
     from rl import report as rp
     a = analyse(rows)
+    b = analyse_personal(rows)
     lo, hi = a["ci"]
     parts = [f"# Step 3 report: camera vs thumbs agreement (P0.3)", "",
              f"- Generated: {rp.time.strftime('%Y-%m-%d %H:%M:%S')}  ", f"- Code: {rp.git_info()}  ",
@@ -154,6 +240,18 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
                  [f"clear reactions (liking at least {STRONG} from 0, either way)", f"{_pct(a['strong_acc'])} of {a['strong_n']}", "agreement when the camera was not near neutral"],
                  ["mean liking, thumb UP", _num(a["mean_up"]), "should be clearly above 0"],
                  ["mean liking, thumb DOWN", _num(a["mean_down"]), "should be clearly below the thumb-UP mean"]]), "",
+             "## 2b. Re-test with a per-person calibration (Step 3b)", "",
+             f"**Result: {personal_text(b)}**", "",
+             "The general rule ('liking > 0 = liked') was replaced by a rule fitted to this person's thumbs, "
+             "starting from the general rule and held close to it when data is thin. Each song is "
+             "predicted by a model that never saw that song (leave-one-out), so the score is not flattered "
+             "by fitting and testing on the same songs.", "",
+             rp.md_table(["measure", "value", "notes"], [
+                 ["usable songs", b["n_usable"], f"{b['ups']} thumb up, {b['downs']} thumb down"],
+                 ["accuracy (leave-one-out)", _pct(b["accuracy"]), f"need {B_GATE_ACCURACY:.0%}; always-majority scores {_pct(b.get('majority'))}"],
+                 ["balanced accuracy", _pct(b["balanced"]), f"need {B_GATE_BALANCED:.0%}; catches liked: {_pct(b.get('tpr'))}, catches disliked: {_pct(b.get('tnr'))}"],
+                 ["AUC", _num(b["auc"], 3), f"need {B_GATE_AUC:.2f}; 0.5 = chance"],
+                 ["personal cut-off", _num(b.get("cut")), "the general rule is 0.00; a song counts as liked when the camera's calibrated liking is above this"]]), "",
              "## 3. How the numbers were produced", "",
              "- **Collection:** songs from the gym and party moods play as 10-second iTunes previews. Before the first song the camera measures a resting baseline "
              "(neutral face, guarded against smiling or moving). At the end of each clip the camera reading is the average liking over the last 3 seconds, "
@@ -163,7 +261,11 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
              "- **Agreement:** (camera-like and thumb-up) + (camera-dislike and thumb-down), divided by usable songs.",
              "- **95% interval:** Wilson score interval for a proportion, centre (p + z²/2n)/(1 + z²/n), half-width z·sqrt(p(1-p)/n + z²/4n²)/(1 + z²/n), z = 1.96.",
              "- **Kappa:** (agreement − expected) / (1 − expected), where expected is the agreement two independent raters would reach by chance given how often each says like.",
-             f"- **Gate (proposed, fixed beforehand):** at least {GATE_MIN_SONGS} usable songs and agreement >= {GATE_ACCURACY:.0%}.", "",
+             f"- **Gate (proposed, fixed beforehand):** at least {GATE_MIN_SONGS} usable songs and agreement >= {GATE_ACCURACY:.0%}.",
+             "- **Step 3b (per-person calibration):** the cut-off on the camera's calibrated liking starts at the general rule (0). It is moved to the value that best catches both this person's liked and disliked songs (best balanced accuracy on the training songs), "
+             f"then shrunk toward 0 by n / (n + {PRIOR_STRENGTH:.0f}) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). "
+             f"Gate set before it was run on any data: accuracy >= {B_GATE_ACCURACY:.0%}, balanced accuracy >= {B_GATE_BALANCED:.0%}, AUC >= {B_GATE_AUC:.2f}, "
+             f"and at least {B_MIN_PER_CLASS} songs of the rarer thumb (otherwise nothing can be judged). Moving a cut-off cannot change the ranking of songs, so AUC stays low if the camera has no signal.", "",
              "## 4. What these numbers do and do not show", "",
              f"- With {a['n_usable']} songs the 95% interval is about ±{(hi - lo) / 2 * 100:.0f} points; a score a few points either side of {GATE_ACCURACY:.0%} is not decisive.",
              "- One person, one room, gym and party songs only. It does not show the camera works for other people or other music.",
@@ -182,6 +284,7 @@ def main(argv=None):
     if not rows:
         raise SystemExit("No rows found.")
     print(format_text(analyse(rows)))
+    print("\nPer-person calibration (leave-one-out):\n" + personal_text(analyse_personal(rows)))
     return 0
 
 

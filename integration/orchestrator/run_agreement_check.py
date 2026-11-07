@@ -92,12 +92,38 @@ def collect(feedback, songs, user, out_csv, target=40, player=None, listen_secon
     return rated
 
 
-def build_songs(seed=0):
+def smart_order(songs, rated_rows, by_id, seed=0):
+    """Order unrated songs so the camera test sees BOTH liked and disliked songs.
+
+    Step 3 found only 4 liked songs out of 39 (the gym and party picks were mostly not Adi's taste), which
+    leaves nothing to test the camera on. So: train the bandit on the thumbs so far, then alternate
+    its top-ranked songs (likely liked) with random ones (likely disliked, and a check on the model)."""
+    from rl.eval import BanditModel
+    rated = {r["song_id"] for r in rated_rows}
+    train = [(by_id[r["song_id"]], r["thumb"]) for r in rated_rows if r["song_id"] in by_id]
+    fresh = [x for x in songs if x.song_id not in rated]
+    if not train or not any(y for _, y in train):
+        return fresh
+    model = BanditModel(seed)
+    model.fit(train)
+    best = sorted(fresh, key=lambda x: -model.score(x))
+    rest = list(fresh)
+    random.Random(seed).shuffle(rest)
+    out, seen = [], set()
+    for a, b in zip(best, rest):
+        for x in (a, b):
+            if x.song_id not in seen:
+                seen.add(x.song_id)
+                out.append(x)
+    return out
+
+
+def build_songs(seed=0, moods=MOODS):
     from music.catalog.songs import get_candidates
     from shared.schemas.messages import Filter, FilterSource
     rng = random.Random(seed)
     lists = []
-    for mood in MOODS:
+    for mood in moods:
         pool = list(get_candidates(Filter((FilterSource("event", mood),))))
         rng.shuffle(pool)
         lists.append(pool)
@@ -119,6 +145,10 @@ def main(argv=None):
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--detector", default="yunet")
     ap.add_argument("--window", type=float, default=3.0)
+    ap.add_argument("--moods", default=",".join(MOODS),
+                    help="comma-separated moods to draw songs from (gym, party, chill, happy, sad, study)")
+    ap.add_argument("--smart", action="store_true",
+                    help="use your earlier thumbs to pick songs you are likely to like (half) and random ones (half)")
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--demo", action="store_true", help="scripted fake face and thumbs, no camera or audio (writes to a demo file)")
     ap.add_argument("--seed", type=int, default=0)
@@ -128,7 +158,8 @@ def main(argv=None):
     from perception.emotion.camera_reaction import CameraFeedback
     if not dataset_available():
         raise SystemExit("Dataset missing. Run: python3 -m music.catalog.download_spotify")
-    songs = build_songs(a.seed)
+    moods = tuple(m.strip() for m in a.moods.split(",") if m.strip())
+    songs = build_songs(a.seed, moods)
     user = a.user
     if a.demo:
         from perception.emotion.taste_mock_model import TasteMockModel
@@ -158,6 +189,12 @@ def main(argv=None):
             player = AudioPlayer(clip_seconds=a.clip_seconds)
         out_csv = DEFAULT_DIR / f"{user}.csv"
 
+    if a.smart and not a.demo:
+        from music.catalog.spotify_catalog import load_spotify
+        prior = ag.load_rows(out_csv, user) if Path(out_csv).exists() else []
+        by_id = {x.song_id: x for x in load_spotify()}
+        songs = smart_order(songs, prior, by_id, a.seed)
+        print(f"Smart picking from {len(prior)} earlier thumbs ({sum(r['thumb'] for r in prior)} liked).")
     feedback.start()
     try:
         if not a.demo and a.calibrate_seconds > 0:

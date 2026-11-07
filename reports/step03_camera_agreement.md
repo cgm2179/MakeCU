@@ -1,13 +1,13 @@
 # Step 3 report: camera vs thumbs agreement (P0.3)
 
-- Generated: 2026-11-07 17:23:20  
-- Code: rl/eval-and-profiles @ fec88cb  
+- Generated: 2026-11-07 17:33:09  
+- Code: rl/eval-and-profiles @ ef90110 (+ uncommitted changes)  
 - Python 3.9.0 on Darwin  
 - User: adi
 
 ## 1. Unit tests: ALL PASSED
 
-- Ran 106 tests in 48.0s: 106 passed, 0 failed, 0 errors, 0 skipped.
+- Ran 112 tests in 47.8s: 112 passed, 0 failed, 0 errors, 0 skipped.
 - Skipped tests need the camera libraries or the Spotify CSV and are skipped on a plain Python install; a skip is not a pass.
 
 | test file | passed | failed | skipped |
@@ -19,7 +19,7 @@
 | music.tests.test_gemini_lookup | 21 | 0 | 0 |
 | music.tests.test_mainstream_bias | 11 | 0 | 0 |
 | music.tests.test_playlist | 3 | 0 | 0 |
-| rl.tests.test_agreement | 8 | 0 | 0 |
+| rl.tests.test_agreement | 14 | 0 | 0 |
 | rl.tests.test_bandit | 6 | 0 | 0 |
 | rl.tests.test_eval | 11 | 0 | 0 |
 | rl.tests.test_profile | 6 | 0 | 0 |
@@ -49,6 +49,20 @@ Data: this person's own thumbs up/down next to the camera's reading for the same
 | mean liking, thumb UP | -0.06 | should be clearly above 0 |
 | mean liking, thumb DOWN | -0.02 | should be clearly below the thumb-UP mean |
 
+## 2b. Re-test with a per-person calibration (Step 3b)
+
+**Result: NOT ENOUGH DATA: only 4 songs of the rarer thumb (4 up, 35 down); need 10 to judge. For reference, on this small sample: accuracy 62% (need 75%), balanced accuracy 45% (need 65%), AUC 0.49 (need 0.65).**
+
+The general rule ('liking > 0 = liked') was replaced by a rule fitted to this person's thumbs, starting from the general rule and held close to it when data is thin. Each song is predicted by a model that never saw that song (leave-one-out), so the score is not flattered by fitting and testing on the same songs.
+
+| measure | value | notes |
+|---|---|---|
+| usable songs | 39 | 4 thumb up, 35 thumb down |
+| accuracy (leave-one-out) | 62% | need 75%; always-majority scores 90% |
+| balanced accuracy | 45% | need 65%; catches liked: 25%, catches disliked: 66% |
+| AUC | 0.493 | need 0.65; 0.5 = chance |
+| personal cut-off | 0.03 | the general rule is 0.00; a song counts as liked when the camera's calibrated liking is above this |
+
 ## 3. How the numbers were produced
 
 - **Collection:** songs from the gym and party moods play as 10-second iTunes previews. Before the first song the camera measures a resting baseline (neutral face, guarded against smiling or moving). At the end of each clip the camera reading is the average liking over the last 3 seconds, adjusted relative to that baseline so a neutral face is about 0. Then the person presses up or down.
@@ -58,6 +72,7 @@ Data: this person's own thumbs up/down next to the camera's reading for the same
 - **95% interval:** Wilson score interval for a proportion, centre (p + z²/2n)/(1 + z²/n), half-width z·sqrt(p(1-p)/n + z²/4n²)/(1 + z²/n), z = 1.96.
 - **Kappa:** (agreement − expected) / (1 − expected), where expected is the agreement two independent raters would reach by chance given how often each says like.
 - **Gate (proposed, fixed beforehand):** at least 40 usable songs and agreement >= 75%.
+- **Step 3b (per-person calibration):** the cut-off on the camera's calibrated liking starts at the general rule (0). It is moved to the value that best catches both this person's liked and disliked songs (best balanced accuracy on the training songs), then shrunk toward 0 by n / (n + 10) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). Gate set before it was run on any data: accuracy >= 75%, balanced accuracy >= 65%, AUC >= 0.65, and at least 10 songs of the rarer thumb (otherwise nothing can be judged). Moving a cut-off cannot change the ranking of songs, so AUC stays low if the camera has no signal.
 
 ## 4. What these numbers do and do not show
 
