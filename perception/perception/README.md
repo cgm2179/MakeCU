@@ -12,22 +12,14 @@ and merges all phones into one `GroupReaction` (AGENTS.md names).
 Start the DroidCam phone app and desktop client, connect them, and enable its virtual camera.
 Then run from the `perception` directory:
 
-    python -m perception --camera 0 --mock   # try the camera without loading DeepFace
-    python -m perception --camera 0           # use the real DeepFace model
+    python -m perception --camera 2 --detector yunet
 
-Replace `0` with the DroidCam camera device index if needed. The local preview shows face
-boxes and scores; press `q` or Esc in that window to exit. This mode uses the PC's
-DroidCam virtual-camera device and does not require the phone webpage or HTTPS setup.
-If you see an OpenCV error saying `The function is not implemented` at `cv2.imshow`,
-reinstall the GUI-enabled OpenCV package in the active virtual environment:
+(`2` is the DroidCam virtual-camera index on this setup; try `0` or `1` if needed.)
 
-    python -m pip install --force-reinstall opencv-python
+Other useful variants:
 
-Phones need HTTPS for camera access. Pick one:
-- Tunnel (easiest, also dodges venue Wi-Fi client isolation):  cloudflared tunnel --url http://localhost:8000
-  then open the printed https URL on each phone.
-- Self-signed: python -m perception.capture.make_cert, rerun `python -m perception`,
-  open https://<laptop-ip>:8000 on the phone and accept the warning.
+    python -m perception --camera 2 --mock              # test camera without loading DeepFace
+    python -m perception --camera 2 --detector retinaface
 
 ## Use from other code
     import perception
