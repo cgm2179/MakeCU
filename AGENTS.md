@@ -85,12 +85,18 @@ Music topics are never consumed by motion, and the reverse.
 - `AudioPlayer.play(song)` is non-blocking; `wait()`, `stop()`, `close()` control it. Swap in your own audio output by passing any object with `play(song) -> bool`, `wait()`, `stop()`.
 - Matching requires the same artist and a similar title; a weak match is treated as "no preview" rather than playing the wrong song.
 
+## Camera Feedback in the Loop (implemented, mock mode)
+
+- `run(..., feedback=CameraFeedback(mock=True))` replaces the fake listener. It starts `perception_cv.serve(...)` in the background, calls `feedback.begin_song(song)` when a song starts, and `feedback.get_group_reaction(song_id)` at the end of the clip (or after `listen_seconds` without audio).
+- Reward is still `group_liking * mean(confidence)`. If mean confidence is below `MIN_CONFIDENCE` (0.1) the bandit skips learning for that round (`info["skipped"]`), because a reward of 0 would pull the song's score toward 0.
+- In mock mode a thread feeds synthetic frames to the service; real phones or a webcam replace that later.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
 |---|---|---|
 | perception | `get_group_reaction(song_id) -> GroupReaction` | all people seen by both cameras |
-| perception (camera package) | `perception_cv.serve(perception_cv.build_service(), background=True)`, then `perception_cv.get_group_reaction(song_id)` | lives in `perception/perception_cv/`; import name `perception_cv` (run from inside `perception/`); not wired into the loop yet |
+| perception (camera package) | `perception_cv.serve(perception_cv.build_service(), background=True)`, then `perception_cv.get_group_reaction(song_id)` | lives in `perception/perception_cv/`; import name `perception_cv` (run from inside `perception/`); wired into the loop in mock mode via `perception/emotion/camera_reaction.py` (`CameraFeedback`); `run(..., feedback=CameraFeedback(...))` |
 | perception | `get_user_motion() -> UserMotion` | current poses for motion |
 | rl | `choose_next_song(candidate_pool) -> NextSong` | agent's pick |
 | rl | `update(reaction: GroupReaction)` | learns from reward |

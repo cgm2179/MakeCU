@@ -28,6 +28,16 @@ from shared.schemas.messages import GroupReaction, Song
 OVERRIDE_CHOSEN_NUDGE = +0.3  # user picked this song
 OVERRIDE_REPLACED_NUDGE = -0.15  # user moved away from this one
 
+# Below this mean confidence a reaction is treated as "nobody was really seen" and the
+# learning step is skipped. (A reward of 0 is NOT neutral to the learner: it would drag the
+# song's predicted score toward 0, wiping out what was learned.)
+MIN_CONFIDENCE = 0.1
+
+
+def mean_confidence(reaction: GroupReaction) -> float:
+    conf = [p.confidence for p in reaction.people]
+    return sum(conf) / len(conf) if conf else 0.0
+
 
 # Audio features are bucketed into labelled ranges so the bandit can learn from them.
 # (name, (cut1, cut2), (label1, label2, label3)); a feature is used only if the song has it.
@@ -119,11 +129,16 @@ class BanditAgent:
         r = self.reward(reaction)
         terms = self._terms(song, ctx)
         predicted = sum(self.weights.get(t, 0.0) for t in terms)
+        confidence = mean_confidence(reaction)
+        if confidence < MIN_CONFIDENCE:  # nobody in view: learn nothing, count nothing
+            return {"reward": 0.0, "predicted": predicted, "error": 0.0, "skipped": True,
+                    "confidence": confidence}
         error = r - predicted
         for t in terms:
             self.weights[t] = self.weights.get(t, 0.0) + self.alpha * error / len(terms)
         self.play_counts[song.song_id] += 1
-        return {"reward": r, "predicted": predicted, "error": error}
+        return {"reward": r, "predicted": predicted, "error": error, "skipped": False,
+                "confidence": confidence}
 
     def record_manual_override(self, chosen: Song, replaced: Song | None,
                                context: Context | None = None) -> dict:

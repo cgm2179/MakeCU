@@ -157,6 +157,18 @@ python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,e
 python3 -m integration.orchestrator.run_playback_demo --mood gym --songs 3 --clip-seconds 10
 ```
 
+## Camera Feedback (mock mode)
+
+The loop can take its reactions from the camera package (`perception/perception_cv`) instead of the fake listener. The bridge in `perception/emotion/camera_reaction.py` lets the loop import it from the repo root, starts the perception service in a background thread, and reads `get_group_reaction(song_id)` at the end of each clip. If nobody is in view (confidence near 0), that round's learning step is skipped. Use a Python that has the camera deps (see `perception/perception_cv/README.md`):
+
+```
+python3 -m integration.orchestrator.run_camera_demo --mood gym --songs 4            # random mock faces
+python3 -m integration.orchestrator.run_camera_demo --mood gym --songs 24 --taste   # faces react to the song
+python3 -m integration.orchestrator.run_camera_demo --songs 4 --taste --audio --empty 3   # real previews, nobody in view in round 3
+```
+
+Without `feedback=...` the loop uses the fake listener as before, so the simulation tests are unchanged.
+
 ## Try It (fake inputs, no hardware)
 
 ```

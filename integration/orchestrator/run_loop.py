@@ -16,7 +16,7 @@ from motion.control.stub_motion import MotionStub
 from music.catalog.songs import get_candidates
 from music.playback.playlist import PlaylistController
 from perception.emotion.fake_reaction import get_group_reaction
-from rl.agent.bandit import BanditAgent
+from rl.agent.bandit import BanditAgent, mean_confidence
 from rl.agent.context import Context, dominant_emotion, filter_key
 from rl.env.simulated_listener import EMOTIONS, SimulatedListener
 from shared.bus.bus import Bus
@@ -48,7 +48,7 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
-        player=None, wait_for_playback=False):
+        player=None, wait_for_playback=False, feedback=None, listen_seconds=2.0):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
@@ -56,6 +56,9 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     taste_shift  : {step: genres} changes a TasteListener's taste at that step
     player       : audio output (AudioPlayer); songs with no playable audio are skipped
     wait_for_playback : wait for each clip to finish before taking the reaction
+    feedback     : real reactions instead of a fake listener, e.g. CameraFeedback (starts its
+                   perception service here). With audio the reaction is read at the end of
+                   the clip; without audio, after listen_seconds.
     """
     say = print if verbose else (lambda *a, **k: None)
     bus = Bus()
@@ -64,10 +67,14 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     agent = agent or BanditAgent(seed=seed)
     controller = PlaylistController(pool, bus, player)
     phone = FakePhone(bus)
-    if listener is None and simulate_rounds:
+    if feedback is not None:
+        listener = None
+        if hasattr(feedback, "start"):
+            feedback.start()  # perception service runs in the background from here on
+    elif listener is None and simulate_rounds:
         listener = SimulatedListener(seed=seed or 0)
     if overrides is None:
-        if not simulate_rounds:
+        if not simulate_rounds or feedback is not None:
             overrides = {}
         elif all(i in controller.catalog for i in DEFAULT_OVERRIDES.values()):
             overrides = DEFAULT_OVERRIDES
@@ -79,7 +86,7 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
 
     emotion, step, last_id, forced = "neutral", 0, None, None
     unavailable: set = set()  # songs the audio output could not play
-    log, rewards = [], []
+    log, rewards, skipped_rounds = [], [], 0
     while simulate_rounds is None or step < simulate_rounds:
         step += 1
         ctx = Context(filter_key(flt), emotion)
@@ -111,26 +118,44 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         if player is not None and getattr(player, "last_url", None):
             say(f"  playing iTunes preview: {player.last_url.rsplit('/', 1)[-1]}")
 
-        if listener and step in overrides:  # user taps another song on their phone, mid-song
+        if feedback is not None and hasattr(feedback, "begin_song"):
+            feedback.begin_song(song)
+
+        if (listener or feedback is not None) and step in overrides:  # user taps another song on their phone, mid-song
             phone.change_song(overrides[step])
             say(f"  phone: user requested {overrides[step]} (current song keeps playing)")
 
         if wait_for_playback and player is not None:
-            player.wait()  # let the clip play out before reading the reaction
+            player.wait()  # let the clip play out; the camera keeps reading meanwhile
+        elif feedback is not None:
+            time.sleep(listen_seconds)
         elif listener:
             time.sleep(round_delay)  # a real song would take much longer
-        reaction = listener.react(song) if listener else get_group_reaction(song.song_id, phone)
+        if feedback is not None:
+            reaction = feedback.get_group_reaction(song.song_id)  # read at the end of the clip
+        elif listener:
+            reaction = listener.react(song)
+        else:
+            reaction = get_group_reaction(song.song_id, phone)
         if reaction is None:
             say("Bye!")
             break
-        if listener:
+        if feedback is not None:
+            shares = {k: round(v, 2) for k, v in sorted(reaction.group_emotion.items(), key=lambda kv: -kv[1]) if v}
+            say(f"  camera reaction: people={len(reaction.people)}, group_liking={reaction.group_liking:+.2f}, "
+                f"mean confidence={mean_confidence(reaction):.2f}, emotions={shares}")
+        elif listener:
             say(f"  simulated reaction: {'like' if reaction.group_liking > 0 else 'dislike'} "
                 f"(listener emotion: {dominant_emotion(reaction)})")
 
         info = agent.update(song, reaction, ctx)
-        rewards.append(info["reward"])
-        say(f"  reward={info['reward']:+.1f}  error={info['error']:+.2f}  -> "
-            f"{'keep similar' if info['reward'] > 0 else 'switch'}")
+        if info.get("skipped"):
+            skipped_rounds += 1
+            say("  nobody in view (confidence ~0) -> skipping the learning step for this round")
+        else:
+            rewards.append(info["reward"])
+            say(f"  reward={info['reward']:+.2f}  error={info['error']:+.2f}  -> "
+                f"{'keep similar' if info['reward'] > 0 else 'switch'}")
 
         emotion = dominant_emotion(reaction)
         manual = controller.take_manual_change()  # song boundary: apply phone change
@@ -140,13 +165,16 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             say(f"  manual override recorded: +signal for {manual.title}, "
                 f"-signal for {song.title}; {manual.title} plays next")
         log.append({"step": step, "song_id": song.song_id, "mode": mode, "emotion": ctx.emotion,
-                    "song": song, "reward": info["reward"]})
+                    "song": song, "reward": info["reward"], "skipped": bool(info.get("skipped")),
+                    "reaction": reaction})
         if verbose:
             print_learning(agent, Context(ctx.filter_key, emotion))
         last_id = song.song_id
 
     controller.stop()
     motion.stop()
+    if feedback is not None and hasattr(feedback, "stop"):
+        feedback.stop()
     say("\n=== Top unplayed songs the agent would recommend ===")
     for emo in EMOTIONS:
         recs = agent.recommend(pool, Context(filter_key(flt), emo), k=3, unplayed_only=True)
@@ -154,7 +182,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     say(f"\nMotion stub: {len(motion.tick_times)} ticks, {motion.restarts} restarts, "
         f"longest gap {motion.longest_gap() * 1000:.0f} ms (music events did not interrupt it)")
     return {"agent": agent, "controller": controller, "motion": motion, "log": log,
-            "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt)}
+            "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt),
+            "skipped_rounds": skipped_rounds}
 
 
 if __name__ == "__main__":

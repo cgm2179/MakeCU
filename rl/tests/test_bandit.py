@@ -68,6 +68,27 @@ class TestBandit(unittest.TestCase):
         self.assertAlmostEqual(agent.predict(replaced, PARTY) - r0, -0.15, places=6)
         self.assertGreater(agent.predict(BY_ID["s4"], PARTY), 0)  # other jazz benefits too
 
+    def test_zero_confidence_reaction_does_not_touch_learning(self):
+        # Nobody in view: group_liking 0, no people. A reward of 0 must NOT be learned from.
+        from shared.schemas.messages import GroupReaction, PersonReaction
+
+        agent = BanditAgent(seed=0)
+        song = BY_ID["s4"]
+        for _ in range(3):
+            agent.update(song, like("s4", True), PARTY)
+        before = (dict(agent.weights), agent.predict(song, PARTY), agent.play_counts["s4"])
+        empty = GroupReaction(0.0, "s4", (), 0.0, {"neutral": 1.0})
+        info = agent.update(song, empty, PARTY)
+        self.assertTrue(info["skipped"])
+        self.assertEqual((dict(agent.weights), agent.predict(song, PARTY), agent.play_counts["s4"]), before)
+        # Same for people present but with ~0 confidence, even if they looked very happy.
+        ghost = GroupReaction(0.0, "s4", (PersonReaction(1, "happy", 1.0, 0.02),), 1.0, {"happy": 1.0})
+        self.assertTrue(agent.update(song, ghost, PARTY)["skipped"])
+        self.assertEqual(dict(agent.weights), before[0])
+        # A normal reaction still learns.
+        self.assertFalse(agent.update(song, like("s4", False), PARTY)["skipped"])
+        self.assertNotEqual(dict(agent.weights), before[0])
+
     def test_learns_simulated_listener(self):
         agent, listener = BanditAgent(seed=1), SimulatedListener(seed=1)
         picks = []
