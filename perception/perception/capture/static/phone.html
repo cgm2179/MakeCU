@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Speaker eyes</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+               font-family: system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: relative; margin: 0 auto; --ar: 0.75;
+          width: min(100vw, calc(100dvh * var(--ar))); aspect-ratio: var(--ar); }
+  video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+  video { object-fit: cover; background: #111; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center;
+         padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: rgba(0,0,0,.7); font-size: 14px; }
+  #status { flex: 1; min-width: 0; }
+  button { font: inherit; padding: 8px 14px; border: 0; border-radius: 8px; background: #2d6cdf; color: #fff; }
+  button.secondary { background: #3a3a3a; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+</div>
+<div id="bar">
+  <div id="status">Tap Start, point the camera at the listeners.</div>
+  <button id="flip" class="secondary">Flip</button>
+  <button id="start">Start</button>
+</div>
+
+<script>
+const WIDTH = 480;        // frame width sent to the server (raise for far-away faces)
+const TARGET_FPS = 4;     // upper bound; real rate is limited by server speed
+const JPEG_QUALITY = 0.6;
+
+const params = new URLSearchParams(location.search);
+const phoneId = params.get('phone') || Math.random().toString(36).slice(2, 8);
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const wrap = document.getElementById('wrap');
+const statusEl = document.getElementById('status');
+const sendCanvas = document.createElement('canvas');
+
+let ws = null, stream = null, running = false, facing = 'user', pending = null, wakeLock = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const setStatus = t => { statusEl.textContent = t; };
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Camera blocked: this page must be opened over https.');
+    throw new Error('no getUserMedia');
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  video.srcObject = stream;
+  await video.play();
+  video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+  wrap.style.setProperty('--ar', video.videoWidth / video.videoHeight);
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?phone=${phoneId}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => setStatus('Connected');
+  ws.onmessage = e => { if (pending) { const p = pending; pending = null; p(JSON.parse(e.data)); } };
+  ws.onclose = () => {
+    if (pending) { const p = pending; pending = null; p(null); }
+    if (running) { setStatus('Disconnected, retrying...'); setTimeout(connect, 1000); }
+  };
+}
+
+function grab() {
+  const w = WIDTH, h = Math.round(WIDTH * video.videoHeight / video.videoWidth);
+  sendCanvas.width = w; sendCanvas.height = h;
+  sendCanvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  return new Promise(res => sendCanvas.toBlob(res, 'image/jpeg', JPEG_QUALITY));
+}
+
+function request(blob) {
+  return new Promise((resolve, reject) => {
+    pending = resolve;
+    ws.send(blob);
+    setTimeout(() => { if (pending === resolve) { pending = null; reject(new Error('timeout')); } }, 8000);
+  });
+}
+
+function draw(msg) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = overlay.clientWidth, H = overlay.clientHeight;
+  if (overlay.width !== Math.round(W * dpr)) { overlay.width = Math.round(W * dpr); overlay.height = Math.round(H * dpr); }
+  const ctx = overlay.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (!msg || !msg.faces) return;
+  ctx.font = '14px system-ui'; ctx.lineWidth = 3;
+  for (const f of msg.faces) {
+    let [x, y, w, h] = f.box;
+    if (facing === 'user') x = 1 - x - w;            // preview is mirrored
+    const hue = Math.round(60 + 60 * f.liking);      // red (dislike) .. green (like)
+    ctx.strokeStyle = `hsl(${hue} 90% 55%)`;
+    ctx.strokeRect(x * W, y * H, w * W, h * H);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fillText(`${f.emotion} ${f.liking.toFixed(2)}`, x * W + 4, Math.max(14, y * H - 6));
+  }
+  setStatus(`${msg.faces.length} face(s) · ${msg.ms} ms`);
+}
+
+async function loop() {
+  while (running) {
+    if (ws && ws.readyState === 1 && video.readyState >= 2) {
+      const t0 = performance.now();
+      try { draw(await request(await grab())); } catch (e) { /* timeout: try again */ }
+      await sleep(Math.max(0, 1000 / TARGET_FPS - (performance.now() - t0)));
+    } else {
+      await sleep(200);
+    }
+  }
+}
+
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+
+document.getElementById('start').onclick = async () => {
+  if (running) return;
+  try { await startCamera(); } catch (e) { setStatus('Camera error: ' + e.message); return; }
+  running = true;
+  document.getElementById('start').style.display = 'none';
+  connect(); keepAwake(); loop();
+};
+document.getElementById('flip').onclick = async () => {
+  facing = facing === 'user' ? 'environment' : 'user';
+  if (running) { try { await startCamera(); } catch (e) { setStatus('Camera error: ' + e.message); } }
+};
+document.addEventListener('visibilitychange', () => { if (!document.hidden && running) keepAwake(); });
+</script>
+</body>
+</html>
