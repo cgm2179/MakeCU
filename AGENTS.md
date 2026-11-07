@@ -91,6 +91,12 @@ Music topics are never consumed by motion, and the reverse.
 - Reward is still `group_liking * mean(confidence)`. If mean confidence is below `MIN_CONFIDENCE` (0.1) the bandit skips learning for that round (`info["skipped"]`), because a reward of 0 would pull the song's score toward 0.
 - In mock mode a thread feeds synthetic frames to the service; real phones or a webcam replace that later.
 
+## Gemini Feature Lookup (implemented, tested offline with a fake transport)
+
+- `SongLookup(gemini=GeminiClient(), ...).lookup(title, artist) -> LookupResult(song, source, reason)`; `source` is `dataset` | `cache` | `gemini` | `unidentified` | `error` | `gemini-disabled`. `song` is `None` unless a Song was found; callers skip those. `extend_pool(pool, songs)` adds looked-up songs to a candidate pool.
+- Looked-up songs have `song_id` starting `gem:`, genre from the dataset's 114 tags, `mood` in {upbeat, aggressive, calm, melancholy}, and `audio_features` with `valence`, `energy` (and `danceability`, `tempo` when given) but no `popularity`.
+- API failures (network, rate limit, bad key) are returned as `source="error"` and are not cached; "unidentified" is cached. The key is read from `GEMINI_API_KEY`/`GOOGLE_API_KEY` or a git-ignored `.env`, sent in a header only.
+
 ## Mainstream Bias (implemented)
 
 - `get_candidates(filter, pool_size=500, mainstream_bias=None)` returns a `CandidatePool` (a list with `.source` = `"database"` | `"hardcoded"`; a future playlist path should return `source="playlist"`). Default strength is `shared.config.defaults.MAINSTREAM_BIAS` (0.5; 0 = off, 1 = strong).

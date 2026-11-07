@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 data/spotify/*.csv
+data/gemini_cache.json
+.env
