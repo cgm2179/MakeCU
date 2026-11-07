@@ -88,6 +88,15 @@ PASTE THIS TO CLAUDE (3a):
   after each clip, then prints how often the camera sign matches my thumb with a confusion
   table. Save results to data/ (git-ignored). Tell me the exact command to run.
 
+STEP 3b - COLLECT MORE LIKED SONGS (only if Claude says "not enough data"; 20 minutes)
+The first run had only 4 liked songs out of 40, so the camera could not be judged. Run again
+with smart picking: it uses your earlier thumbs to play songs you are likely to like (half) and
+random ones (half). It resumes and adds to your existing file.
+  git checkout rl/eval-and-profiles
+  /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 80 --moods gym,party,chill,happy,sad,study
+Then send Claude the printed result with the 3c prompt below. Done when at least 10 songs got a
+thumb up and 10 a thumb down.
+
 PASTE THIS TO CLAUDE (3c, after you ran it):
   Step 3 done. Here is the output: [paste what the tool printed]. Run
   python3 -m rl.report --step 3 --agreement data/agreement/adi.csv --user adi, then tell me
