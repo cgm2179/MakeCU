@@ -6,11 +6,11 @@ and merges all phones into one `GroupReaction` (AGENTS.md names).
 ## Setup
     pip install -r perception_cv/requirements.txt
     pip uninstall -y opencv-contrib-python-headless
-    pip install --force-reinstall --no-deps opencv-python==5.0.0.93
+    pip install --force-reinstall --no-deps "opencv-python<5"
 
 deepface pulls in a second OpenCV build (`opencv-contrib-python-headless`) that shares the same `cv2`
 folder as `opencv-python`; whichever installs last wins, and the headless one has no preview window.
-The last two commands leave only `opencv-python`. Needs Python 3.9 or newer.
+The last two commands leave only `opencv-python` (4.x: OpenCV 5 dropped `CascadeClassifier`, which DeepFace's default `opencv` detector needs). Needs Python 3.9 or newer.
 
 ## Run
     python -m perception_cv --mock          # fake emotions, test the phone page first

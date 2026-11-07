@@ -144,6 +144,13 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             shares = {k: round(v, 2) for k, v in sorted(reaction.group_emotion.items(), key=lambda kv: -kv[1]) if v}
             say(f"  camera reaction: people={len(reaction.people)}, group_liking={reaction.group_liking:+.2f}, "
                 f"mean confidence={mean_confidence(reaction):.2f}, emotions={shares}")
+            for pr in reaction.people:
+                say(f"    person {pr.person_id}: emotion={pr.emotion}, liking={pr.liking:+.2f}, "
+                    f"confidence={pr.confidence:.2f}")
+            if hasattr(feedback, "consume_stats"):
+                frames, avg_ms, faces = feedback.consume_stats()
+                say(f"  camera feed this clip: {frames} frames analysed (avg {avg_ms:.0f} ms each), "
+                    f"faces in last frame: {faces}")
         elif listener:
             say(f"  simulated reaction: {'like' if reaction.group_liking > 0 else 'dislike'} "
                 f"(listener emotion: {dominant_emotion(reaction)})")

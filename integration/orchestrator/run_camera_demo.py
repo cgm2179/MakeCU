@@ -7,6 +7,7 @@ Run from the repo root with a Python that has the camera deps (opencv-python, fa
     python3 -m integration.orchestrator.run_camera_demo --mood gym --songs 24 --taste --empty 4,9
     python3 -m integration.orchestrator.run_camera_demo --songs 3 --audio                 # + real previews
 
+--real           : your actual webcam and the DeepFace model (needs camera permission, internet on first run).
 --mock (default): perception_cv.build_service(mock=True), random faces that do not depend on the song.
 --taste         : mock faces that react to the song (hidden taste: likes happy-sounding songs,
                   valence >= 0.7), still going through the real tracker + scoring pipeline.
@@ -30,6 +31,9 @@ def main():
     ap.add_argument("--listen-seconds", type=float, default=1.0, help="how long the camera watches per song (no audio)")
     ap.add_argument("--taste", action="store_true", help="faces react to the song (to see the bandit adapt)")
     ap.add_argument("--empty", default="", help="comma-separated rounds with nobody in view, e.g. 4,9 (needs --taste)")
+    ap.add_argument("--real", action="store_true", help="REAL webcam + DeepFace instead of mock (no fallback to mock)")
+    ap.add_argument("--camera", type=int, default=0, help="webcam index to try first with --real (then 1, 2, 3)")
+    ap.add_argument("--detector", default="opencv", help="DeepFace detector with --real (their default is opencv; yunet is more reliable)")
     ap.add_argument("--audio", action="store_true", help="play iTunes previews; the reaction is read when the clip ends")
     ap.add_argument("--clip-seconds", type=float, default=6)
     ap.add_argument("--seed", type=int, default=0)
@@ -43,7 +47,10 @@ def main():
     if empty and not a.taste:
         raise SystemExit("--empty needs --taste (the plain mock model cannot remove faces)")
     liked = lambda song: song.audio_features["valence"] >= 0.7
-    if a.taste:
+    if a.real:
+        feedback = CameraFeedback(mock=False, camera_index=a.camera, detector=a.detector)
+        print(f"REAL camera (index {a.camera} first) + DeepFace, detector '{a.detector}'. No mock fallback.")
+    elif a.taste:
         from perception.emotion.taste_mock_model import TasteMockModel
 
         feedback = CameraFeedback(model=TasteMockModel(liked, seed=a.seed), empty_rounds=empty)
