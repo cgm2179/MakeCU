@@ -97,6 +97,19 @@ random ones (half). It resumes and adds to your existing file.
 Then send Claude the printed result with the 3c prompt below. Done when at least 10 songs got a
 thumb up and 10 a thumb down.
 
+STEP 3c - RICHER CAMERA MEASUREMENT (about 45 minutes total, two sessions)
+The tool now also records head movement (nodding on the beat), peak reaction and smile for each
+clip. We need at least 60 songs with these, 15 liked and 15 disliked, to see if they help.
+  Session 1, you alone (quiet room):
+    git checkout rl/eval-and-profiles
+    /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 150 --setting quiet --moods gym,party,chill,happy,sad,study
+    (it adds about 70 songs to your file; keep sitting and reacting naturally)
+  Session 2, busy setting with 2 or 3 teammates in front of the camera, music a bit louder:
+    ... same command but:  --user adi_busy --group-size 3 --setting busy --songs 40 --moods party,gym,happy
+    After each clip type how many of the 3 people liked it (0 to 3).
+Then send Claude the 3c prompt below. The report shows whether movement helps and, separately,
+quiet versus busy.
+
 PASTE THIS TO CLAUDE (3c, after you ran it):
   Step 3 done. Here is the output: [paste what the tool printed]. Run
   python3 -m rl.report --step 3 --agreement data/agreement/adi.csv --user adi, then tell me
