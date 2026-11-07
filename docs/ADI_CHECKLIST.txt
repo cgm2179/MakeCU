@@ -110,6 +110,13 @@ clip. We need at least 60 songs with these, 15 liked and 15 disliked, to see if 
 Then send Claude the 3c prompt below. The report shows whether movement helps and, separately,
 quiet versus busy.
 
+STATUS: Session 2 (busy group, 40 songs) is DONE. Session 1 (you alone, quiet room) is STILL TO DO
+and it matters most: in the busy session the head-nodding measurement (bob_share) predicted the
+group's thumbs well (AUC 0.88), but it was picked by looking at that data, so it only counts if it
+also works on new songs. The pass mark was written down first: bob_share alone must reach AUC 0.70
+on at least 40 quiet-room songs (12 or more of each thumb). Sit normally and react naturally; don't
+exaggerate head movement.
+
 PASTE THIS TO CLAUDE (3c, after you ran it):
   Step 3 done. Here is the output: [paste what the tool printed]. Run
   python3 -m rl.report --step 3 --agreement data/agreement/adi.csv --user adi, then tell me
