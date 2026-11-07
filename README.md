@@ -134,12 +134,27 @@ Put these in `shared/schemas/` and `shared/bus/` early so everyone can build aga
 - Each module should run alone with mocked inputs.
 - Keep large files (datasets, models, CAD exports) out of git.
 
+## Real Song Data (Spotify Tracks Dataset)
+
+The song list comes from the Hugging Face dataset `maharshipandya/spotify-tracks-dataset` (about 114k rows, 80k unique tracks after cleaning). It is not stored in git. Download it once, then everything runs offline:
+
+```
+python3 -m music.catalog.download_spotify     # saves data/spotify/dataset.csv (20 MB)
+```
+
+Without the CSV the code falls back to a small hardcoded song list. The first filter maps a mood or activity to a target feature vector (valence and energy are the main axes) and keeps the 500 nearest songs. Moods: `sad`, `happy`, `gym`, `study`, `party`, `chill` (plus aliases like `workout`, `studying`). See `music/filter/mood_targets.py`.
+
+```
+python3 -m integration.orchestrator.run_mood_demo --mood gym --rounds 60 --likes punk-rock,emo
+python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,emo --sweep 24   # many seeds
+```
+
 ## Try It (fake inputs, no hardware)
 
 ```
 python3 -m integration.orchestrator.run_loop --simulate 25   # simulated listener + phone
 python3 -m integration.orchestrator.run_loop                 # you type l / d, or "m s6" for a phone song change
-python3 -m unittest rl.tests.test_bandit music.tests.test_playlist integration.tests.test_core_loop -v
+python3 -m unittest rl.tests.test_bandit music.tests.test_playlist music.tests.test_dataset_pipeline integration.tests.test_core_loop -v
 ```
 
 ## Status

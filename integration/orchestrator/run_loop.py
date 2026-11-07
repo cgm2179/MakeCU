@@ -8,6 +8,7 @@ Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import random
 import time
 
 from app.api.fake_phone import FakePhone
@@ -25,6 +26,14 @@ from shared.schemas.messages import Filter, FilterSource
 DEFAULT_OVERRIDES = {6: "s6", 14: "s11"}
 
 
+def describe(song) -> str:
+    """One-line description using whichever audio features the song has."""
+    af = song.audio_features
+    bits = [f"{k} {af[k]:.2f}" if k != "tempo" else f"tempo {af[k]:.0f}"
+            for k in ("energy", "valence", "tempo") if k in af]
+    return f"{song.title} by {song.artist} ({song.genre}, {song.mood}; {', '.join(bits)})"
+
+
 def _fmt(items):
     return ", ".join(f"{f} {w:+.2f}" for f, w in items) or "-"
 
@@ -37,18 +46,30 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 
 
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
-        round_delay=0.02):
-    """Run the loop. Returns a dict of what happened (used by the tests)."""
+        round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None):
+    """Run the loop. Returns a dict of what happened (used by the tests).
+
+    pool         : candidate songs; default = get_candidates(first filter)
+    listener     : fake listener with .react(song); default = SimulatedListener
+    taste_shift  : {step: genres} changes a TasteListener's taste at that step
+    """
     say = print if verbose else (lambda *a, **k: None)
     bus = Bus()
     flt = Filter(sources=(FilterSource("event", event),))
-    pool = get_candidates(flt)
-    agent = BanditAgent(seed=seed)
+    pool = pool if pool is not None else get_candidates(flt)
+    agent = agent or BanditAgent(seed=seed)
     controller = PlaylistController(pool, bus)
     phone = FakePhone(bus)
-    listener = SimulatedListener(seed=seed or 0) if simulate_rounds else None
+    if listener is None and simulate_rounds:
+        listener = SimulatedListener(seed=seed or 0)
     if overrides is None:
-        overrides = DEFAULT_OVERRIDES if simulate_rounds else {}
+        if not simulate_rounds:
+            overrides = {}
+        elif all(i in controller.catalog for i in DEFAULT_OVERRIDES.values()):
+            overrides = DEFAULT_OVERRIDES
+        else:  # dataset pool: have the phone ask for two songs from the pool
+            rng = random.Random(seed)
+            overrides = {6: rng.choice(pool).song_id, 14: rng.choice(pool).song_id}
     motion = MotionStub()
     motion.start()  # robot movement runs on its own; music events never touch it
 
@@ -62,8 +83,10 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         else:
             song, mode = agent.choose_next_song(pool, last_id, ctx, recent_ids=controller.history[-4:])
         controller.play(song)
-        say(f"\n[{step}] Now playing: {song.title} by {song.artist} "
-            f"({song.genre}, {song.mood}, energy {song.audio_features['energy']}) "
+        if taste_shift and step in taste_shift:
+            listener.set_liked(taste_shift[step])
+            say(f"\n*** listener's taste changes: now likes {sorted(taste_shift[step])} ***")
+        say(f"\n[{step}] Now playing: {describe(song)} "
             f"[{mode}, predicted {agent.predict(song, ctx):+.2f}]")
         say(f"  context: filter={ctx.filter_key}, emotion={ctx.emotion}")
 
@@ -93,7 +116,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             forced = manual
             say(f"  manual override recorded: +signal for {manual.title}, "
                 f"-signal for {song.title}; {manual.title} plays next")
-        log.append({"step": step, "song_id": song.song_id, "mode": mode, "emotion": ctx.emotion})
+        log.append({"step": step, "song_id": song.song_id, "mode": mode, "emotion": ctx.emotion,
+                    "song": song, "reward": info["reward"]})
         if verbose:
             print_learning(agent, Context(ctx.filter_key, emotion))
         last_id = song.song_id

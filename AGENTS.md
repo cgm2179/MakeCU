@@ -72,6 +72,13 @@ Music topics are never consumed by motion, and the reverse.
 - A phone song change is posted to the bus and applied at the next song boundary (`PlaylistController.take_manual_change()`). It is recorded as a weaker signal (+0.3 chosen, -0.15 replaced). It never touches motion.
 - Tests: `python3 -m unittest rl.tests.test_bandit music.tests.test_playlist integration.tests.test_core_loop -v`
 
+## Song Data and First Filter (implemented)
+
+- Dataset columns map to `Song`: `track_id`->`song_id`, `track_name`->`title`, first of `artists`->`artist`, `track_genre`->`genre`; `valence, energy, danceability, tempo (BPM), acousticness, instrumentalness, popularity` -> `audio_features`; `mood` is derived from the valence/energy quadrant (`upbeat`, `aggressive`, `calm`, `melancholy`).
+- `get_candidates(filter, pool_size=500)`: an `event` source whose `source_value` is a mood name (see `music/filter/mood_targets.py`) returns the songs nearest that target; `random` returns a random sample. `playlist`, `artists`, `themes` sources are not implemented yet.
+- The bandit buckets `energy`, `valence`, `danceability`, `tempo` (plus genre, artist, mood). Do not add more buckets without re-testing: acousticness/instrumentalness buckets slowed learning.
+- Tests for the dataset need the CSV and are skipped without it.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |

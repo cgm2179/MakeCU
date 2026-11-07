@@ -29,17 +29,29 @@ OVERRIDE_CHOSEN_NUDGE = +0.3  # user picked this song
 OVERRIDE_REPLACED_NUDGE = -0.15  # user moved away from this one
 
 
+# Audio features are bucketed into labelled ranges so the bandit can learn from them.
+# (name, (cut1, cut2), (label1, label2, label3)); a feature is used only if the song has it.
+# Kept to four on purpose: tested with up to ten buckets, the extra ones (acousticness,
+# instrumentalness) mostly dilute the genre/artist signal and slowed learning.
+BUCKETS = [
+    ("energy", (0.4, 0.7), ("low", "mid", "high")),
+    ("valence", (0.4, 0.7), ("low", "mid", "high")),
+    ("danceability", (0.4, 0.7), ("low", "mid", "high")),
+    ("tempo", (100.0, 125.0), ("slow", "mid", "fast")),
+]
+
+
 def energy_bucket(energy: float) -> str:
     return "low" if energy < 0.4 else "mid" if energy < 0.7 else "high"
 
 
 def features(song: Song) -> list[str]:
-    return [
-        f"genre:{song.genre}",
-        f"artist:{song.artist}",
-        f"energy:{energy_bucket(song.audio_features.get('energy', 0.5))}",
-        f"mood:{song.mood or 'unknown'}",
-    ]
+    out = [f"genre:{song.genre}", f"artist:{song.artist}", f"mood:{song.mood or 'unknown'}"]
+    for name, (c1, c2), (l1, l2, l3) in BUCKETS:
+        if name in song.audio_features:
+            v = song.audio_features[name]
+            out.append(f"{name}:{l1 if v < c1 else l2 if v < c2 else l3}")
+    return out
 
 
 class BanditAgent:

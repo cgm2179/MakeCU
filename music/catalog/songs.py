@@ -4,6 +4,8 @@ Each song has: genre, artist, energy (0-1, in audio_features) and mood.
 """
 from __future__ import annotations
 
+import random
+
 from shared.schemas.messages import Filter, Song
 
 
@@ -31,6 +33,25 @@ SONGS = [
 ]
 
 
-def get_candidates(filter: Filter | None = None) -> list[Song]:
-    """Return the candidate pool. The fake version ignores the filter."""
-    return list(SONGS)
+def get_candidates(filter: Filter | None = None, pool_size: int = 500) -> list[Song]:
+    """Return the candidate pool for the first filter.
+
+    Uses the downloaded Spotify dataset when data/spotify/dataset.csv exists
+    (see music/catalog/download_spotify.py); otherwise falls back to the hardcoded
+    SONGS above (filter ignored). Supported filter sources so far:
+      event  : a mood/activity name from music/filter/mood_targets.py (e.g. "gym")
+      random : a random sample
+    Other source types (playlist, artists, themes) are not implemented yet.
+    """
+    from music.catalog.spotify_catalog import dataset_available, load_spotify
+
+    if not dataset_available():
+        return list(SONGS)
+    songs = load_spotify()
+    for src in (filter.sources if filter else ()):
+        if src.source_type == "event":
+            from music.filter.mood_targets import profile_for, select_pool
+            profile = profile_for(src.source_value)
+            if profile:
+                return select_pool(songs, profile, pool_size)
+    return random.Random().sample(songs, pool_size)  # "random" or no usable filter
