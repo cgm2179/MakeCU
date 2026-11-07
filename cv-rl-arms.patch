@@ -1,0 +1,515 @@
+From e84b9d9abfe6eb05571291f874b6e6fe1c0df873 Mon Sep 17 00:00:00 2001
+From: Sabaa R <sabaaras@gmail.com>
+Date: Sat, 7 Nov 2026 23:33:00 +0000
+Subject: [PATCH] Connect camera reactions to the bandit and emotion to the
+ arms.
+
+An unhappy group_liking now lowers that song and its genre. Happy arms swing fast, large, and out of phase; sad arms swing slow, small, and together. Numbers live in motion/control/arm_params.py.
+---
+ hardware/firmware/arms/arms.ino      | 63 ++++++++++++++++++++++++++++
+ integration/orchestrator/run_loop.py | 50 ++++++++++++++++++----
+ integration/tests/test_cv_to_rl.py   | 57 +++++++++++++++++++++++++
+ motion/control/arm_params.py         | 55 ++++++++++++++++++++++++
+ motion/control/emotion_arms.py       | 17 ++++++++
+ motion/drivers/arm_link.py           | 40 ++++++++++++++++++
+ motion/tests/test_arms.py            | 31 ++++++++++++++
+ perception/bridge.py                 | 55 ++++++++++++++++++++++++
+ 8 files changed, 359 insertions(+), 9 deletions(-)
+ create mode 100644 hardware/firmware/arms/arms.ino
+ create mode 100644 integration/tests/test_cv_to_rl.py
+ create mode 100644 motion/control/arm_params.py
+ create mode 100644 motion/control/emotion_arms.py
+ create mode 100644 motion/drivers/arm_link.py
+ create mode 100644 motion/tests/test_arms.py
+ create mode 100644 perception/bridge.py
+
+diff --git a/hardware/firmware/arms/arms.ino b/hardware/firmware/arms/arms.ino
+new file mode 100644
+index 0000000..f094a6b
+--- /dev/null
++++ b/hardware/firmware/arms/arms.ino
+@@ -0,0 +1,63 @@
++// Arm driver. Listens for lines from motion/drivers/arm_link.py:
++//
++//   ARM <period_s> <amplitude> <phase_offset_deg> <emotion>
++//
++// Both servos oscillate until a new line arrives.
++// phase 0   = arms together
++// phase 180 = arms opposite
++//
++// Change the pins and the pulse limits to match the build.
++
++#include <Servo.h>
++
++const int LEFT_PIN = 9;
++const int RIGHT_PIN = 10;
++const int CENTER_US = 1500;
++const int MAX_SWING_US = 400;  // amplitude 1.0 swings +/- this many microseconds
++
++Servo leftServo;
++Servo rightServo;
++
++float periodS = 1.40;
++float amplitude = 0.40;
++float phaseDeg = 0.0;
++String emotion = "neutral";
++
++void setup() {
++  Serial.begin(115200);
++  leftServo.attach(LEFT_PIN);
++  rightServo.attach(RIGHT_PIN);
++  leftServo.writeMicroseconds(CENTER_US);
++  rightServo.writeMicroseconds(CENTER_US);
++}
++
++void applyLine(String line) {
++  if (!line.startsWith("ARM ")) return;
++  // ARM period amplitude phase emotion
++  float p, a, ph;
++  char emo[16] = "neutral";
++  if (sscanf(line.c_str(), "ARM %f %f %f %15s", &p, &a, &ph, emo) == 4) {
++    periodS = p > 0.05f ? p : 0.05f;
++    amplitude = constrain(a, 0.0f, 1.0f);
++    phaseDeg = ph;
++    emotion = emo;
++  }
++}
++
++void loop() {
++  if (Serial.available()) {
++    String line = Serial.readStringUntil('\n');
++    line.trim();
++    applyLine(line);
++  }
++
++  float t = millis() / 1000.0f;
++  float w = TWO_PI / periodS;
++  float phase = phaseDeg * DEG_TO_RAD;
++  int swing = (int)(amplitude * MAX_SWING_US);
++  int leftUs = CENTER_US + (int)(swing * sin(w * t));
++  int rightUs = CENTER_US + (int)(swing * sin(w * t + phase));
++  leftServo.writeMicroseconds(leftUs);
++  rightServo.writeMicroseconds(rightUs);
++  delay(20);
++}
+diff --git a/integration/orchestrator/run_loop.py b/integration/orchestrator/run_loop.py
+index a96a3fe..1fae427 100644
+--- a/integration/orchestrator/run_loop.py
++++ b/integration/orchestrator/run_loop.py
+@@ -4,6 +4,7 @@ Run from the repo root:
+     python3 -m integration.orchestrator.run_loop                      # you give l / d feedback
+     python3 -m integration.orchestrator.run_loop --simulate 25        # simulated listener + phone
+     python3 -m integration.orchestrator.run_loop --event study --simulate 25
++    python3 -m integration.orchestrator.run_loop --live --camera 2 --detector yunet
+ """
+ from __future__ import annotations
+ 
+@@ -12,7 +13,9 @@ import random
+ import time
+ 
+ from app.api.fake_phone import FakePhone
++from motion.control.emotion_arms import EmotionArms
+ from motion.control.stub_motion import MotionStub
++from motion.drivers.arm_link import ArmLink
+ from music.catalog.songs import get_candidates
+ from music.playback.playlist import PlaylistController
+ from perception.emotion.fake_reaction import get_group_reaction
+@@ -25,6 +28,8 @@ from shared.schemas.messages import Filter, FilterSource
+ # In --simulate mode the fake phone changes the song mid-way at these steps.
+ DEFAULT_OVERRIDES = {6: "s6", 14: "s11"}
+ MAX_SKIPS = 15  # give up after this many unplayable songs in a row
++# group_liking at or below this is unhappy: the update lowers the song and its genre.
++UNHAPPY_LIKING = -0.2
+ 
+ 
+ def describe(song) -> str:
+@@ -48,7 +53,7 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
+ 
+ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
+         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
+-        player=None, wait_for_playback=False):
++        player=None, wait_for_playback=False, react=None, arms=None):
+     """Run the loop. Returns a dict of what happened (used by the tests).
+ 
+     pool         : candidate songs; default = get_candidates(first filter)
+@@ -56,6 +61,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
+     taste_shift  : {step: genres} changes a TasteListener's taste at that step
+     player       : audio output (AudioPlayer); songs with no playable audio are skipped
+     wait_for_playback : wait for each clip to finish before taking the reaction
++    react        : callable(song_id) -> GroupReaction from the live camera
++    arms         : EmotionArms; default sends arm lines in memory (no serial)
+     """
+     say = print if verbose else (lambda *a, **k: None)
+     bus = Bus()
+@@ -76,6 +83,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
+             overrides = {6: rng.choice(pool).song_id, 14: rng.choice(pool).song_id}
+     motion = MotionStub()
+     motion.start()  # robot movement runs on its own; music events never touch it
++    if arms is None:
++        arms = EmotionArms()
+ 
+     emotion, step, last_id, forced = "neutral", 0, None, None
+     unavailable: set = set()  # songs the audio output could not play
+@@ -117,22 +126,32 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
+ 
+         if wait_for_playback and player is not None:
+             player.wait()  # let the clip play out before reading the reaction
+-        elif listener:
++        elif listener and react is None:
+             time.sleep(round_delay)  # a real song would take much longer
+-        reaction = listener.react(song) if listener else get_group_reaction(song.song_id, phone)
++        if react is not None:
++            reaction = react(song.song_id)
++        elif listener:
++            reaction = listener.react(song)
++        else:
++            reaction = get_group_reaction(song.song_id, phone)
+         if reaction is None:
+             say("Bye!")
+             break
+-        if listener:
++        if listener and react is None:
+             say(f"  simulated reaction: {'like' if reaction.group_liking > 0 else 'dislike'} "
+                 f"(listener emotion: {dominant_emotion(reaction)})")
+ 
+         info = agent.update(song, reaction, ctx)
+         rewards.append(info["reward"])
++        emotion = dominant_emotion(reaction)
++        profile = arms.apply(emotion)
++        if reaction.group_liking <= UNHAPPY_LIKING:
++            say(f"  unhappy (liking {reaction.group_liking:+.2f}): discouraging "
++                f"\"{song.title}\" and genre {song.genre}")
+         say(f"  reward={info['reward']:+.1f}  error={info['error']:+.2f}  -> "
+             f"{'keep similar' if info['reward'] > 0 else 'switch'}")
+-
+-        emotion = dominant_emotion(reaction)
++        say(f"  arms ({emotion}): period {profile.period_s:.2f}s  "
++            f"amp {profile.amplitude:.2f}  phase {profile.phase_offset_deg:.0f} deg")
+         manual = controller.take_manual_change()  # song boundary: apply phone change
+         if manual:
+             agent.record_manual_override(manual, song, ctx)
+@@ -153,8 +172,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
+         say(f"  when {emo:<7}: " + "; ".join(f"{s.title} ({s.genre}, {p:+.2f})" for s, p in recs))
+     say(f"\nMotion stub: {len(motion.tick_times)} ticks, {motion.restarts} restarts, "
+         f"longest gap {motion.longest_gap() * 1000:.0f} ms (music events did not interrupt it)")
+-    return {"agent": agent, "controller": controller, "motion": motion, "log": log,
+-            "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt)}
++    return {"agent": agent, "controller": controller, "motion": motion, "arms": arms,
++            "log": log, "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt)}
+ 
+ 
+ if __name__ == "__main__":
+@@ -162,5 +181,18 @@ if __name__ == "__main__":
+     parser.add_argument("--simulate", type=int, metavar="N", help="run N rounds with a simulated listener")
+     parser.add_argument("--event", default="party", help="first filter, e.g. party, study")
+     parser.add_argument("--seed", type=int, default=None)
++    parser.add_argument("--live", action="store_true",
++                        help="read faces from the camera instead of the keyboard")
++    parser.add_argument("--camera", type=int, default=2, help="DroidCam index (default 2)")
++    parser.add_argument("--detector", default="yunet", help="DeepFace detector, e.g. yunet")
++    parser.add_argument("--sample", type=float, default=2.0,
++                        help="seconds of camera time per song before scoring the reaction")
++    parser.add_argument("--arm-port", default=None,
++                        help="Arduino serial port, e.g. COM3. Omit to only print arm lines.")
+     args = parser.parse_args()
+-    run(args.simulate, args.event, args.seed)
++    react = None
++    if args.live:
++        from perception.bridge import LiveCamera, start_camera
++        react = LiveCamera(start_camera(args.camera, args.detector), sample_s=args.sample)
++    run(args.simulate, args.event, args.seed, react=react,
++        arms=EmotionArms(ArmLink(args.arm_port)))
+diff --git a/integration/tests/test_cv_to_rl.py b/integration/tests/test_cv_to_rl.py
+new file mode 100644
+index 0000000..64d5129
+--- /dev/null
++++ b/integration/tests/test_cv_to_rl.py
+@@ -0,0 +1,57 @@
++"""Run from the repo root: python3 -m unittest integration.tests.test_cv_to_rl -v"""
++import unittest
++
++from music.catalog.songs import SONGS
++from perception.bridge import to_shared
++from perception.emotion.fake_reaction import _reaction
++from rl.agent.bandit import BanditAgent
++from rl.agent.context import Context
++
++BY_ID = {s.song_id: s for s in SONGS}
++CTX = Context("event:party", "neutral")
++
++
++class _Person:
++    def __init__(self, emotion, liking, confidence=1.0):
++        self.person_id = 0
++        self.emotion = emotion
++        self.liking = liking
++        self.confidence = confidence
++
++
++class _Live:
++    def __init__(self, liking, emotion):
++        self.timestamp = 0.0
++        self.song_id = "s8"
++        self.people = [_Person(emotion, liking)]
++        self.group_liking = liking
++        self.group_emotion = {emotion: 1.0}
++
++
++class TestCameraFeedsTheBandit(unittest.TestCase):
++    def test_unhappy_camera_frame_discourages_song_and_genre(self):
++        agent = BanditAgent(seed=0)
++        song = BY_ID["s8"]  # hip-hop
++        reaction = to_shared(_Live(-0.8, "sad"), song.song_id)
++        self.assertLessEqual(reaction.group_liking, -0.2)
++        self.assertEqual(reaction.people[0].emotion, "sad")
++
++        before = agent.predict(song, CTX)
++        before_genre = agent.weights.get(("global", "genre:hip-hop"), 0.0)
++        agent.update(song, reaction, CTX)
++        self.assertLess(agent.predict(song, CTX), before)
++        self.assertLess(agent.weights[("global", "genre:hip-hop")], before_genre)
++
++    def test_keyboard_dislike_uses_the_same_update(self):
++        """The fake 'd' key and a sad camera frame are the same kind of reward."""
++        song = BY_ID["s1"]
++        keyboard = _reaction("s1", -1.0, "sad")
++        camera = to_shared(_Live(-1.0, "sad"), "s1")
++        a, b = BanditAgent(seed=1), BanditAgent(seed=1)
++        a.update(song, keyboard, CTX)
++        b.update(song, camera, CTX)
++        self.assertAlmostEqual(a.predict(song, CTX), b.predict(song, CTX))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/motion/control/arm_params.py b/motion/control/arm_params.py
+new file mode 100644
+index 0000000..1ae8c67
+--- /dev/null
++++ b/motion/control/arm_params.py
+@@ -0,0 +1,55 @@
++"""Arm oscillation, chosen from the listener's emotion.
++
++Both arms follow a sine around the center pose:
++
++    left  = amplitude * sin(2 * pi * t / period_s)
++    right = amplitude * sin(2 * pi * t / period_s + radians(phase_offset_deg))
++
++phase_offset_deg
++    0    both arms move together ("at the same time")
++    180  arms move opposite each other (out of phase)
++
++amplitude is a fraction of full travel, from 0.0 to 1.0.
++period_s is seconds for one full cycle. Smaller means faster.
++
++Edit the numbers in this file. Callers only look up a profile by emotion name.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++
++@dataclass(frozen=True)
++class ArmProfile:
++    period_s: float
++    amplitude: float
++    phase_offset_deg: float
++
++
++# Happy: out of phase, fairly fast, large swing.
++HAPPY = ArmProfile(period_s=0.55, amplitude=0.85, phase_offset_deg=180.0)
++
++# Sad: in phase, much slower, small swing.
++SAD = ArmProfile(period_s=2.80, amplitude=0.22, phase_offset_deg=0.0)
++
++# Used when the camera sees nobody, or an emotion with no profile of its own.
++NEUTRAL = ArmProfile(period_s=1.40, amplitude=0.40, phase_offset_deg=0.0)
++
++# Starting points for the other emotions. Happy and sad are the ones specified.
++SURPRISED = ArmProfile(period_s=0.70, amplitude=0.70, phase_offset_deg=180.0)
++ANGRY = ArmProfile(period_s=0.90, amplitude=0.50, phase_offset_deg=180.0)
++BORED = ArmProfile(period_s=3.20, amplitude=0.15, phase_offset_deg=0.0)
++
++PROFILES: dict[str, ArmProfile] = {
++    "happy": HAPPY,
++    "surprised": SURPRISED,
++    "sad": SAD,
++    "angry": ANGRY,
++    "bored": BORED,
++    "neutral": NEUTRAL,
++}
++
++
++def motion_for_emotion(emotion: str) -> ArmProfile:
++    """Profile for this emotion. Unknown names fall back to NEUTRAL."""
++    return PROFILES.get(emotion, NEUTRAL)
+diff --git a/motion/control/emotion_arms.py b/motion/control/emotion_arms.py
+new file mode 100644
+index 0000000..aed8b98
+--- /dev/null
++++ b/motion/control/emotion_arms.py
+@@ -0,0 +1,17 @@
++"""Apply the listener's emotion to the arms. Does not import music or perception."""
++from __future__ import annotations
++
++from motion.control.arm_params import ArmProfile, motion_for_emotion
++from motion.drivers.arm_link import ArmLink
++
++
++class EmotionArms:
++    def __init__(self, link: ArmLink | None = None):
++        self.link = link or ArmLink()
++        self.history: list[tuple[str, ArmProfile]] = []
++
++    def apply(self, emotion: str) -> ArmProfile:
++        profile = motion_for_emotion(emotion)
++        self.link.send(profile, emotion)
++        self.history.append((emotion, profile))
++        return profile
+diff --git a/motion/drivers/arm_link.py b/motion/drivers/arm_link.py
+new file mode 100644
+index 0000000..3c382ff
+--- /dev/null
++++ b/motion/drivers/arm_link.py
+@@ -0,0 +1,40 @@
++"""Send the current arm profile to the Arduino over serial.
++
++Line format (one update per line):
++
++    ARM <period_s> <amplitude> <phase_offset_deg> <emotion>
++
++Example:
++
++    ARM 0.550 0.850 180.0 happy
++
++If port is None, the line is stored in last_line and nothing is sent.
++That is what tests and a laptop with no Arduino plugged in use.
++"""
++from __future__ import annotations
++
++from motion.control.arm_params import ArmProfile
++
++
++class ArmLink:
++    def __init__(self, port: str | None = None, baud: int = 115200):
++        self.port = port
++        self.baud = baud
++        self.last_line = ""
++        self._ser = None
++        if port:
++            import serial  # pyserial; only needed when an Arduino is attached
++            self._ser = serial.Serial(port, baud, timeout=1)
++
++    def send(self, profile: ArmProfile, emotion: str) -> str:
++        line = (f"ARM {profile.period_s:.3f} {profile.amplitude:.3f} "
++                f"{profile.phase_offset_deg:.1f} {emotion}")
++        self.last_line = line
++        if self._ser is not None:
++            self._ser.write((line + "\n").encode())
++        return line
++
++    def close(self) -> None:
++        if self._ser is not None:
++            self._ser.close()
++            self._ser = None
+diff --git a/motion/tests/test_arms.py b/motion/tests/test_arms.py
+new file mode 100644
+index 0000000..2538ec9
+--- /dev/null
++++ b/motion/tests/test_arms.py
+@@ -0,0 +1,31 @@
++"""Run from the repo root: python3 -m unittest motion.tests.test_arms -v"""
++import unittest
++
++from motion.control.arm_params import motion_for_emotion
++from motion.control.emotion_arms import EmotionArms
++from motion.drivers.arm_link import ArmLink
++
++
++class TestArms(unittest.TestCase):
++    def test_happy_is_fast_large_and_out_of_phase(self):
++        happy = motion_for_emotion("happy")
++        sad = motion_for_emotion("sad")
++        self.assertEqual(happy.phase_offset_deg, 180.0)
++        self.assertEqual(sad.phase_offset_deg, 0.0)
++        self.assertLess(happy.period_s, sad.period_s)
++        self.assertGreater(happy.amplitude, sad.amplitude)
++
++    def test_apply_sends_a_line_the_arduino_can_parse(self):
++        link = ArmLink()
++        profile = EmotionArms(link).apply("sad")
++        self.assertEqual(profile.phase_offset_deg, 0.0)
++        self.assertTrue(link.last_line.startswith("ARM "))
++        parts = link.last_line.split()
++        self.assertEqual(parts[0], "ARM")
++        self.assertEqual(parts[4], "sad")
++        self.assertAlmostEqual(float(parts[1]), profile.period_s)
++        self.assertAlmostEqual(float(parts[3]), 0.0)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/perception/bridge.py b/perception/bridge.py
+new file mode 100644
+index 0000000..fbf6427
+--- /dev/null
++++ b/perception/bridge.py
+@@ -0,0 +1,55 @@
++"""Turn a live camera GroupReaction into the message the RL agent already learns from.
++
++The camera pipeline (perception.perception) and the bandit (shared.schemas) each
++have their own GroupReaction type. This is the only place that converts one into
++the other, so the agent can discourage a song and its genre from a real face.
++"""
++from __future__ import annotations
++
++import threading
++import time
++
++from shared.schemas.messages import GroupReaction, PersonReaction
++
++
++def to_shared(live, song_id: str | None = None) -> GroupReaction:
++    people = tuple(
++        PersonReaction(int(p.person_id), p.emotion, float(p.liking), float(p.confidence))
++        for p in live.people
++    )
++    return GroupReaction(
++        timestamp=float(live.timestamp),
++        song_id=song_id or live.song_id,
++        people=people,
++        group_liking=float(live.group_liking),
++        group_emotion=dict(live.group_emotion),
++    )
++
++
++class LiveCamera:
++    """Read whatever faces the camera has seen over the last sample_s seconds."""
++
++    def __init__(self, service, sample_s: float = 2.0):
++        self.service = service
++        self.sample_s = sample_s
++
++    def __call__(self, song_id: str) -> GroupReaction:
++        if self.sample_s > 0:
++            time.sleep(self.sample_s)
++        return to_shared(self.service.get_group_reaction(song_id), song_id)
++
++
++def start_camera(camera_index: int = 2, detector: str = "yunet"):
++    """Open the local camera (DroidCam) and keep feeding the perception service.
++
++    Returns the service. The preview window runs on a background thread; press q
++    in that window to stop it. DeepFace is imported only here, not at test time.
++    """
++    from perception.perception.api import build_service
++    from perception.perception.capture.local_camera import run_local_camera
++
++    service = build_service(detector=detector)
++    threading.Thread(
++        target=run_local_camera, args=(service, camera_index), daemon=True,
++    ).start()
++    return service
+-- 
+2.39.5
+
