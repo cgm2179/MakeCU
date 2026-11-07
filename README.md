@@ -149,6 +149,21 @@ python3 -m integration.orchestrator.run_mood_demo --mood gym --rounds 60 --likes
 python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,emo --sweep 24   # many seeds
 ```
 
+## Songs Not in the Dataset (Gemini lookup)
+
+For a song given by title and artist, `music/catalog/song_lookup.py` first looks in the Spotify dataset (fast path, handles "- Remastered", "feat." and similar variants). Only if it is not there does it ask Google Gemini for the song's genre, mood, energy and valence (plus danceability and tempo), which are mapped into our song schema (genre restricted to the dataset's 114 tags) so the bandit and mood filter use it like any other song. Results are cached in `data/gemini_cache.json` (git-ignored), including "Gemini doesn't know this song", so a song is looked up once. A song Gemini cannot identify, or is not confident about, is skipped cleanly. These are Gemini's rough estimates, not measured audio features, and looked-up songs have no popularity score (so the mainstream bias leaves them alone).
+
+Setup: put `GEMINI_API_KEY=...` in a `.env` file in the repo root (git-ignored), or export it. Only the title and artist are sent. Override the model with `GEMINI_MODEL`. Default model `gemini-3.5-flash`; Google retires models quickly (2.5 already returns 404 for new users), so if you see a 404 pick a current one from the model list (`GEMINI_MODEL=...`). The free tier has a small per-day request quota per model; the cache means each song costs one call, and a quota error is reported with its retry time and is not cached. Gemini's estimates vary slightly between calls (e.g. valence 0.63 to 0.84 for one song), so the first answer is cached and kept.
+
+```
+python3 -m integration.orchestrator.run_lookup_demo      # a few well-known songs not in the dataset
+python3 -m integration.orchestrator.run_lookup_demo --songs "Billie Jean|Michael Jackson"
+```
+
+## Mainstream Bias (well-known songs first)
+
+On the database (Spotify dataset) path, the first filter and the early picks lean toward well-known songs using the dataset's popularity score, so a mood like gym opens with recognizable tracks. Strength runs from 0 (off) to 1 (strong); default 0.5, set in `shared/config/defaults.py` or per run with `--mainstream-bias`. It has two parts: the mood pool is ranked by closeness to the target *plus* popularity, and the bandit adds a popularity prior that fades over its first ~10 rounds as it learns your taste. Exploration is kept, so less-known songs still appear and the bandit can find a niche taste. The pool is always topped up to full size, even for niche moods. It never applies to a user's own playlist: pools are tagged with their source (`database`, `hardcoded`, later `playlist`) and only `database` pools turn it on.
+
 ## Real Audio Playback (iTunes previews)
 
 `music/playback/audio.py` looks each chosen song up on the free iTunes Search API (no key; only the title and artist are sent), downloads its 30-second preview and plays it through the computer speaker (`afplay` on macOS, or `ffplay`/`mpv`). Playback is non-blocking, so the motion system is not held up. Songs with no matching preview are skipped and the bandit picks again; about 7 in 10 songs in the gym pool have one.
@@ -156,6 +171,18 @@ python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,e
 ```
 python3 -m integration.orchestrator.run_playback_demo --mood gym --songs 3 --clip-seconds 10
 ```
+
+## Camera Feedback (mock mode)
+
+The loop can take its reactions from the camera package (`perception/perception_cv`) instead of the fake listener. The bridge in `perception/emotion/camera_reaction.py` lets the loop import it from the repo root, starts the perception service in a background thread, and reads `get_group_reaction(song_id)` at the end of each clip. If nobody is in view (confidence near 0), that round's learning step is skipped. Use a Python that has the camera deps (see `perception/perception_cv/README.md`):
+
+```
+python3 -m integration.orchestrator.run_camera_demo --mood gym --songs 4            # random mock faces
+python3 -m integration.orchestrator.run_camera_demo --mood gym --songs 24 --taste   # faces react to the song
+python3 -m integration.orchestrator.run_camera_demo --songs 4 --taste --audio --empty 3   # real previews, nobody in view in round 3
+```
+
+Without `feedback=...` the loop uses the fake listener as before, so the simulation tests are unchanged.
 
 ## Try It (fake inputs, no hardware)
 

@@ -21,12 +21,32 @@ import random
 from collections import Counter
 
 from rl.agent.context import Context
+from shared.config.defaults import MAINSTREAM_BIAS
 from shared.schemas.messages import GroupReaction, Song
 
 # A phone override nudges a song's predicted score by this much (weaker than an
 # explicit like/dislike, which pulls the score toward +/-1).
 OVERRIDE_CHOSEN_NUDGE = +0.3  # user picked this song
 OVERRIDE_REPLACED_NUDGE = -0.15  # user moved away from this one
+
+# Below this mean confidence a reaction is treated as "nobody was really seen" and the
+# learning step is skipped. (A reward of 0 is NOT neutral to the learner: it would drag the
+# song's predicted score toward 0, wiping out what was learned.)
+MIN_CONFIDENCE = 0.1
+
+# Mainstream prior (database path only; see shared/config/defaults.py): while choosing, a song's
+# score gets + PRIOR_SCALE * mainstream_bias * (popularity / 100) * fade, where fade starts at 1
+# and falls toward PRIOR_FLOOR as the agent accumulates evidence. Early on, with nothing learned,
+# this makes it pick well-known songs; later, what it has learned outweighs it.
+PRIOR_SCALE = 0.5
+PRIOR_FLOOR = 0.15
+PRIOR_DECAY = 0.8  # per learned round
+PRIOR_TIE_SLACK = 0.06  # songs within this score of the best are treated as tied (scaled by bias)
+
+
+def mean_confidence(reaction: GroupReaction) -> float:
+    conf = [p.confidence for p in reaction.people]
+    return sum(conf) / len(conf) if conf else 0.0
 
 
 # Audio features are bucketed into labelled ranges so the bandit can learn from them.
@@ -56,13 +76,18 @@ def features(song: Song) -> list[str]:
 
 class BanditAgent:
     def __init__(self, epsilon=0.3, epsilon_min=0.05, decay=0.95, alpha=0.3,
-                 novelty_bonus=0.3, seed=None):
+                 novelty_bonus=0.3, seed=None, mainstream_bias=MAINSTREAM_BIAS):
         self.epsilon, self.epsilon_min, self.decay = epsilon, epsilon_min, decay
         self.alpha = alpha  # fraction of the prediction error closed per update
         self.novelty_bonus = novelty_bonus  # small push toward songs not yet heard
         self.weights: dict[tuple[str, str], float] = {}
         self.play_counts: Counter = Counter()  # songs that have received a reaction
         self.rng = random.Random(seed)
+        self.mainstream_bias = mainstream_bias  # strength, 0 (off) .. 1
+        # Off by default. The loop switches it on only when the pool came from the database path,
+        # so a user's own playlist is never nudged toward popular songs.
+        self.mainstream_active = False
+        self.n_updates = 0
 
     # ---- scoring ----
     @staticmethod
@@ -79,7 +104,14 @@ class BanditAgent:
     def score(self, song: Song, context: Context | None = None) -> float:
         """Prediction plus a small bonus for songs never played."""
         bonus = self.novelty_bonus if self.play_counts[song.song_id] == 0 else 0.0
-        return self.predict(song, context) + bonus
+        return self.predict(song, context) + bonus + self.mainstream_prior(song)
+
+    def mainstream_prior(self, song: Song) -> float:
+        """The early-round lean toward well-known songs (0 unless switched on for the database path)."""
+        if not self.mainstream_active or self.mainstream_bias <= 0:
+            return 0.0
+        fade = PRIOR_FLOOR + (1 - PRIOR_FLOOR) * PRIOR_DECAY ** self.n_updates
+        return PRIOR_SCALE * self.mainstream_bias * song.audio_features.get("popularity", 0.0) / 100 * fade
 
     def recommend(self, pool: list[Song], context: Context | None = None, k: int = 3,
                   unplayed_only: bool = False) -> list[tuple[Song, float]]:
@@ -103,8 +135,12 @@ class BanditAgent:
         self.epsilon = max(self.epsilon_min, self.epsilon * self.decay)
         if self.rng.random() < eps:
             return self.rng.choice(pool), "explore"
-        best = max(self.score(s, context) for s in pool)
-        return self.rng.choice([s for s in pool if self.score(s, context) == best]), "exploit"
+        scores = [(self.score(s, context), s) for s in pool]
+        best = max(sc for sc, _ in scores)
+        # With the mainstream prior on, rotate among the top few well-known songs instead of
+        # always taking the single most popular one (otherwise every session opens the same way).
+        slack = PRIOR_TIE_SLACK * self.mainstream_bias if self.mainstream_active else 0.0
+        return self.rng.choice([s for sc, s in scores if sc >= best - slack]), "exploit"
 
     # ---- learning ----
     @staticmethod
@@ -119,11 +155,17 @@ class BanditAgent:
         r = self.reward(reaction)
         terms = self._terms(song, ctx)
         predicted = sum(self.weights.get(t, 0.0) for t in terms)
+        confidence = mean_confidence(reaction)
+        if confidence < MIN_CONFIDENCE:  # nobody in view: learn nothing, count nothing
+            return {"reward": 0.0, "predicted": predicted, "error": 0.0, "skipped": True,
+                    "confidence": confidence}
         error = r - predicted
         for t in terms:
             self.weights[t] = self.weights.get(t, 0.0) + self.alpha * error / len(terms)
         self.play_counts[song.song_id] += 1
-        return {"reward": r, "predicted": predicted, "error": error}
+        self.n_updates += 1
+        return {"reward": r, "predicted": predicted, "error": error, "skipped": False,
+                "confidence": confidence}
 
     def record_manual_override(self, chosen: Song, replaced: Song | None,
                                context: Context | None = None) -> dict:

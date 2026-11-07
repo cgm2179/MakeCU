@@ -1,6 +1,6 @@
 """Turn a live camera GroupReaction into the message the RL agent already learns from.
 
-The camera pipeline (perception.perception) and the bandit (shared.schemas) each
+The camera pipeline (perception.perception_cv) and the bandit (shared.schemas) each
 have their own GroupReaction type. This is the only place that converts one into
 the other, so the agent can discourage a song and its genre from a real face.
 """
@@ -45,8 +45,8 @@ def start_camera(camera_index: int = 2, detector: str = "yunet"):
     Returns the service. The preview window runs on a background thread; press q
     in that window to stop it. DeepFace is imported only here, not at test time.
     """
-    from perception.perception.api import build_service
-    from perception.perception.capture.local_camera import run_local_camera
+    from perception.perception_cv.api import build_service
+    from perception.perception_cv.capture.local_camera import run_local_camera
 
     service = build_service(detector=detector)
     threading.Thread(

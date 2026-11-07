@@ -85,11 +85,30 @@ Music topics are never consumed by motion, and the reverse.
 - `AudioPlayer.play(song)` is non-blocking; `wait()`, `stop()`, `close()` control it. Swap in your own audio output by passing any object with `play(song) -> bool`, `wait()`, `stop()`.
 - Matching requires the same artist and a similar title; a weak match is treated as "no preview" rather than playing the wrong song.
 
+## Camera Feedback in the Loop (implemented, mock mode)
+
+- `run(..., feedback=CameraFeedback(mock=True))` replaces the fake listener. It starts `perception_cv.serve(...)` in the background, calls `feedback.begin_song(song)` when a song starts, and `feedback.get_group_reaction(song_id)` at the end of the clip (or after `listen_seconds` without audio).
+- Reward is still `group_liking * mean(confidence)`. If mean confidence is below `MIN_CONFIDENCE` (0.1) the bandit skips learning for that round (`info["skipped"]`), because a reward of 0 would pull the song's score toward 0.
+- In mock mode a thread feeds synthetic frames to the service; real phones or a webcam replace that later.
+
+## Gemini Feature Lookup (implemented, tested offline with a fake transport)
+
+- `SongLookup(gemini=GeminiClient(), ...).lookup(title, artist) -> LookupResult(song, source, reason)`; `source` is `dataset` | `cache` | `gemini` | `unidentified` | `error` | `gemini-disabled`. `song` is `None` unless a Song was found; callers skip those. `extend_pool(pool, songs)` adds looked-up songs to a candidate pool.
+- Looked-up songs have `song_id` starting `gem:`, genre from the dataset's 114 tags, `mood` in {upbeat, aggressive, calm, melancholy}, and `audio_features` with `valence`, `energy` (and `danceability`, `tempo` when given) but no `popularity`.
+- API failures (network, rate limit, bad key) are returned as `source="error"` and are not cached; "unidentified" is cached. The key is read from `GEMINI_API_KEY`/`GOOGLE_API_KEY` or a git-ignored `.env`, sent in a header only.
+
+## Mainstream Bias (implemented)
+
+- `get_candidates(filter, pool_size=500, mainstream_bias=None)` returns a `CandidatePool` (a list with `.source` = `"database"` | `"hardcoded"`; a future playlist path should return `source="playlist"`). Default strength is `shared.config.defaults.MAINSTREAM_BIAS` (0.5; 0 = off, 1 = strong).
+- Database path only: `select_pool` ranks by distance minus a popularity bonus (popularity floor is soft: lower-popularity songs top the pool up, so it is never short); `BanditAgent.mainstream_prior` adds a fading popularity prior while choosing. `run()` switches the prior on only when `pool.source == "database"`, so a user's own playlist is never biased.
+- Tradeoff measured on 16 seeds: strength 0.5 lifts early-pick popularity from ~47 to ~70-82 and costs a taste for unpopular genres ~8 points of learning (91% to 83%); strength 1.0 costs ~20.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
 |---|---|---|
 | perception | `get_group_reaction(song_id) -> GroupReaction` | all people seen by both cameras |
+| perception (camera package) | `perception_cv.serve(perception_cv.build_service(), background=True)`, then `perception_cv.get_group_reaction(song_id)` | lives in `perception/perception_cv/`; import name `perception_cv` (run from inside `perception/`); wired into the loop in mock mode via `perception/emotion/camera_reaction.py` (`CameraFeedback`); `run(..., feedback=CameraFeedback(...))` |
 | perception | `get_user_motion() -> UserMotion` | current poses for motion |
 | rl | `choose_next_song(candidate_pool) -> NextSong` | agent's pick |
 | rl | `update(reaction: GroupReaction)` | learns from reward |

@@ -18,6 +18,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from music.catalog.names import clean_artist as _clean_artist
+from music.catalog.names import clean_title as _clean_title
 from shared.schemas.messages import Song
 
 SEARCH_URL = "https://itunes.apple.com/search"
@@ -27,16 +29,6 @@ MIN_TITLE_SIMILARITY = 0.75
 
 
 # ---- matching a dataset song to an iTunes result ----
-def _clean_title(title: str) -> str:
-    title = re.sub(r"[\(\[].*?[\)\]]", " ", title.lower())  # (feat. X), [Remix]
-    title = re.sub(r"\s+-\s+.*$", "", title)  # " - Radio Edit", " - Remastered 2011"
-    return re.sub(r"[^a-z0-9]+", " ", title).strip()
-
-
-def _clean_artist(artist: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", artist.lower()).strip()
-
-
 def best_match(song: Song, results: list) -> dict | None:
     """The iTunes result that is really this song (same artist, similar title) and has
     a preview, or None. Refusing a weak match beats playing the wrong song."""

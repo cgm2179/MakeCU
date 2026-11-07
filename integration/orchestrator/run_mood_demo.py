@@ -37,6 +37,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--sweep", type=int, default=0, metavar="N",
                     help="repeat the run over N seeds and print aggregate results only")
+    ap.add_argument("--mainstream-bias", type=float, default=None, metavar="0..1",
+                    help="lean toward well-known songs on the database path (default 0.5; 0 = off)")
     ap.add_argument("--quiet", action="store_true", help="hide the per-round learning printout")
     a = ap.parse_args()
 
@@ -48,15 +50,15 @@ def main():
 
     allsongs = load_spotify()
     flt = Filter((FilterSource("event", a.mood),))
-    pool = get_candidates(flt, a.pool_size)
+    pool = get_candidates(flt, a.pool_size, mainstream_bias=a.mainstream_bias)
     genres = Counter(s.genre for s in pool)
     print(f"Dataset: {len(allsongs):,} unique tracks loaded from CSV")
     print(f"First filter: event='{a.mood}' -> target { {k: v[0] for k, v in profile.items()} }")
-    print(f"Pool: {len(pool)} nearest songs")
+    print(f"Pool: {len(pool)} best songs for the mood, well-known ones first (mainstream bias {a.mainstream_bias if a.mainstream_bias is not None else "default"})")
     print(f"  pool means   : {means(pool)}")
     print(f"  dataset means: {means(allsongs)}")
     print(f"  top genres in pool: {genres.most_common(8)}")
-    print("  closest 5 to target:")
+    print("  first 5 in the pool:")
     for s in pool[:5]:
         print("    -", describe(s))
 
@@ -71,7 +73,7 @@ def main():
         early, late = [], []
         for sd in range(a.sweep):
             lg = run(a.rounds, event=a.mood, seed=sd, verbose=False, round_delay=0.0, pool=pool,
-                     listener=TasteListener(likes, seed=sd), overrides={})["log"]
+                     listener=TasteListener(likes, seed=sd), overrides={}, mainstream_bias=a.mainstream_bias)["log"]
             hit = lambda es: sum(e["song"].genre in likes for e in es) / len(es)
             early.append(hit(lg[:15]))
             late.append(hit(lg[-20:]))
@@ -83,7 +85,7 @@ def main():
 
     out = run(a.rounds, event=a.mood, seed=a.seed, verbose=not a.quiet, round_delay=0.0,
               pool=pool, listener=TasteListener(likes, seed=a.seed), taste_shift=shift,
-              overrides={})
+              overrides={}, mainstream_bias=a.mainstream_bias)
 
     log = out["log"]
     played = [e["song"] for e in log]

@@ -45,8 +45,25 @@ def distance(song: Song, profile: dict) -> float:
     return (total / weight_sum) ** 0.5
 
 
+POOL_POPULARITY_WEIGHT = 0.4  # distance units a fully popular song (100) is worth, at mainstream_bias=1
+
+
+def _popularity(song: Song) -> float:
+    return song.audio_features.get("popularity", 0.0)
+
+
 def select_pool(songs: list[Song], profile: dict, size: int = 500,
-                min_popularity: float = 30.0) -> list[Song]:
-    """The `size` songs nearest the target, ignoring very obscure tracks."""
-    eligible = [s for s in songs if s.audio_features.get("popularity", 100) >= min_popularity]
-    return sorted(eligible, key=lambda s: distance(s, profile))[:size]
+                min_popularity: float = 30.0, mainstream_bias: float = 0.0) -> list[Song]:
+    """The `size` best songs for the target, best first.
+
+    Songs are ranked by distance to the target minus a popularity bonus, so with a bias the
+    well-known songs near the target come first (mainstream_bias 0 = pure distance, as before).
+    Songs below `min_popularity` are used only as a fallback to top the pool up to `size`,
+    so a niche mood (e.g. instrumental study music) never ends up with a short or empty pool."""
+    weight = POOL_POPULARITY_WEIGHT * max(0.0, mainstream_bias)
+    key = lambda s: distance(s, profile) - weight * _popularity(s) / 100
+    known = sorted((s for s in songs if _popularity(s) >= min_popularity), key=key)
+    if len(known) >= size:
+        return known[:size]
+    rest = sorted((s for s in songs if _popularity(s) < min_popularity), key=key)
+    return known + rest[: size - len(known)]
