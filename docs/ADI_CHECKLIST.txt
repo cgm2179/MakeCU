@@ -68,16 +68,20 @@ Why: the robot will learn from your face. We must first find out whether your fa
 truth about what you like.
 
   3a. Ask Claude to build the tool.
-  3b. Run the tool Claude gives you. You will hear "3, 2, 1, hold a neutral face". Hold a
-      relaxed, non-smiling face for about 8 seconds. Then about 40 song clips play, 10 seconds
-      each. After each clip press UP if you liked it or DOWN if you did not. React naturally.
-      Do not smile on purpose or hold back a smile.
+  3b. Run the tool (already built, on branch rl/eval-and-profiles):
+        git checkout rl/eval-and-profiles
+        python3 -m integration.orchestrator.run_agreement_check --user adi
+      You will hear "3, 2, 1, hold a neutral face". Hold a relaxed, non-smiling face for about
+      8 seconds. Then about 40 song clips play, 10 seconds each. After each clip type  u  and
+      Enter if you liked it, or  d  and Enter if you did not (s = skip song, q = quit and
+      resume later). React naturally. Do not smile on purpose or hold back a smile.
   3c. Claude prints how often the camera and your thumb agreed.
 
 Done when: you have a result like "camera matched your thumb on 78% of 40 songs".
 Passing is 75% or more. If it is lower, that is useful, not a failure: Claude will switch to
 using only your thumbs and treat the camera as a minor extra.
 
+(The tool is built, so you can skip 3a unless it fails to start.)
 PASTE THIS TO CLAUDE (3a):
   Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoint P0.3: a tool that plays 40 gym and
   party clips, runs the camera with the neutral-face calibration, and records my thumbs up/down
@@ -85,7 +89,9 @@ PASTE THIS TO CLAUDE (3a):
   table. Save results to data/ (git-ignored). Tell me the exact command to run.
 
 PASTE THIS TO CLAUDE (3c, after you ran it):
-  Step 3 done. Here is the output: [paste what the tool printed]. Does it pass the P0.3 gate?
+  Step 3 done. Here is the output: [paste what the tool printed]. Run
+  python3 -m rl.report --step 3 --agreement data/agreement/adi.csv --user adi, then tell me
+  whether it passes the P0.3 gate and explain the numbers.
 
 
 STEP 4 - Rate 150 songs (about 40 minutes, one sitting if you can)
