@@ -164,3 +164,13 @@ class TestSmartOrder(unittest.TestCase):
         prior = [dict(rows_from([0], [0])[0], song_id="s0")]
         order = rc.smart_order(songs, prior, {s.song_id: s for s in songs})
         self.assertEqual([s.song_id for s in order], ["s1", "s2", "s3", "s4"])
+
+
+class TestLikeCutoff(unittest.TestCase):
+    def test_cutoff_is_0_0025_and_is_strict(self):
+        self.assertEqual(ag.LIKE_CUTOFF, 0.0025)
+        rows = rows_from([1, 1, 0, 0], [0.003, 0.0025, 0.002, -0.5])
+        a = ag.analyse(rows)
+        self.assertEqual((a["tp"], a["fn"], a["fp"], a["tn"]), (1, 1, 0, 2))   # 0.0025 itself is not above the cut-off
+        self.assertTrue(ag.PersonCalibrator().says_like(0.003))
+        self.assertFalse(ag.PersonCalibrator().says_like(0.002))

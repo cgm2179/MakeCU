@@ -1,7 +1,7 @@
 """Does the camera agree with what the person says they liked? (checkpoint P0.3)
 
 Input : one row per song: the person's thumb (1 = up, 0 = down) and the camera's calibrated liking.
-Rule  : the camera "says like" when calibrated liking > 0, otherwise "says dislike".
+Rule  : the camera "says like" when calibrated liking > LIKE_CUTOFF (0.0025), otherwise "says dislike".
 Gate  : at least 40 usable songs and the camera's sign matches the thumb on >= 75% of them (proposed).
 
 Run (after collecting with integration/orchestrator/run_agreement_check.py):
@@ -19,6 +19,7 @@ from rl import eval as ev
 
 GATE_ACCURACY = 0.75
 GATE_MIN_SONGS = 40
+LIKE_CUTOFF = 0.0025   # the camera counts as "liked" above this calibrated liking (was 0; set by Adi: detect the faintest reaction)
 MIN_CONFIDENCE = 0.1   # same cut-off the bandit uses: below it nobody was really seen
 STRONG = 0.2           # a "clear" camera reaction: |calibrated liking| >= this
 FIELDS = ["user", "song_id", "thumb", "liking", "confidence", "emotion", "time"]
@@ -55,10 +56,10 @@ def wilson(successes, n, z=1.96):
 def analyse(rows):
     use = usable(rows)
     n = len(use)
-    tp = sum(1 for r in use if r["thumb"] and r["liking"] > 0)    # thumb up, camera says like
-    fn = sum(1 for r in use if r["thumb"] and r["liking"] <= 0)   # thumb up, camera says dislike
-    fp = sum(1 for r in use if not r["thumb"] and r["liking"] > 0)
-    tn = sum(1 for r in use if not r["thumb"] and r["liking"] <= 0)
+    tp = sum(1 for r in use if r["thumb"] and r["liking"] > LIKE_CUTOFF)    # thumb up, camera says like
+    fn = sum(1 for r in use if r["thumb"] and r["liking"] <= LIKE_CUTOFF)   # thumb up, camera says dislike
+    fp = sum(1 for r in use if not r["thumb"] and r["liking"] > LIKE_CUTOFF)
+    tn = sum(1 for r in use if not r["thumb"] and r["liking"] <= LIKE_CUTOFF)
     ups, downs = tp + fn, fp + tn
     out = {"n_rated": len(rows), "n_usable": n, "n_excluded": len(rows) - n,
            "tp": tp, "fn": fn, "fp": fp, "tn": tn, "ups": ups, "downs": downs}
@@ -73,7 +74,7 @@ def analyse(rows):
     tnr = tn / downs if downs else None
     balanced = statistics.mean(x for x in (tpr, tnr) if x is not None)
     strong = [r for r in use if abs(r["liking"]) >= STRONG]
-    strong_ok = sum(1 for r in strong if (r["liking"] > 0) == bool(r["thumb"]))
+    strong_ok = sum(1 for r in strong if (r["liking"] > LIKE_CUTOFF) == bool(r["thumb"]))
     up_l = [r["liking"] for r in use if r["thumb"]]
     dn_l = [r["liking"] for r in use if not r["thumb"]]
     out.update({
@@ -92,7 +93,7 @@ def analyse(rows):
 
 
 # ---------------------------------------------------------------- per-person calibration (Step 3b)
-# The general rule says "camera liking > 0 means liked". People differ: some show a liked song with a
+# The general rule says "camera liking > LIKE_CUTOFF means liked". People differ: some show a liked song with a
 # tiny smile, some barely react. PersonCalibrator keeps the general rule as the starting point and shifts
 # the cut-off to where THIS person's thumbs say it belongs (the cut-off that best catches both their liked
 # and disliked songs), but only as far as their data justifies: the shift is shrunk toward 0 when there are
@@ -120,14 +121,14 @@ class PersonCalibrator:
     """A personal cut-off on the camera's calibrated liking, starting from the general rule (cut-off 0)."""
 
     def __init__(self, strength=PRIOR_STRENGTH):
-        self.strength, self.cut, self.raw_cut = strength, 0.0, 0.0
+        self.strength, self.cut, self.raw_cut = strength, LIKE_CUTOFF, LIKE_CUTOFF
 
     def fit(self, rows):
         vals = sorted({r["liking"] for r in rows})
-        cands = [0.0] + [(a + b) / 2 for a, b in zip(vals, vals[1:])]
+        cands = [LIKE_CUTOFF] + [(a + b) / 2 for a, b in zip(vals, vals[1:])]
         # best balanced accuracy; ties go to the candidate nearest the general rule
-        self.raw_cut = max(cands, key=lambda c: (round(_balanced(rows, c), 9), -abs(c)))
-        self.cut = self.raw_cut * len(rows) / (len(rows) + self.strength)
+        self.raw_cut = max(cands, key=lambda c: (round(_balanced(rows, c), 9), -abs(c - LIKE_CUTOFF)))
+        self.cut = LIKE_CUTOFF + (self.raw_cut - LIKE_CUTOFF) * len(rows) / (len(rows) + self.strength)
         return self
 
     def says_like(self, liking):
@@ -242,7 +243,7 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
                  ["mean liking, thumb DOWN", _num(a["mean_down"]), "should be clearly below the thumb-UP mean"]]), "",
              "## 2b. Re-test with a per-person calibration (Step 3b)", "",
              f"**Result: {personal_text(b)}**", "",
-             "The general rule ('liking > 0 = liked') was replaced by a rule fitted to this person's thumbs, "
+             f"The general rule ('liking > {LIKE_CUTOFF} = liked') was replaced by a rule fitted to this person's thumbs, "
              "starting from the general rule and held close to it when data is thin. Each song is "
              "predicted by a model that never saw that song (leave-one-out), so the score is not flattered "
              "by fitting and testing on the same songs.", "",
@@ -251,19 +252,19 @@ def build_agreement_report(rows, tests, user="", synthetic=False):
                  ["accuracy (leave-one-out)", _pct(b["accuracy"]), f"need {B_GATE_ACCURACY:.0%}; always-majority scores {_pct(b.get('majority'))}"],
                  ["balanced accuracy", _pct(b["balanced"]), f"need {B_GATE_BALANCED:.0%}; catches liked: {_pct(b.get('tpr'))}, catches disliked: {_pct(b.get('tnr'))}"],
                  ["AUC", _num(b["auc"], 3), f"need {B_GATE_AUC:.2f}; 0.5 = chance"],
-                 ["personal cut-off", _num(b.get("cut")), "the general rule is 0.00; a song counts as liked when the camera's calibrated liking is above this"]]), "",
+                 ["personal cut-off", _num(b.get("cut")), f"the general rule is {LIKE_CUTOFF}; a song counts as liked when the camera's calibrated liking is above this"]]), "",
              "## 3. How the numbers were produced", "",
              "- **Collection:** songs from the gym and party moods play as 10-second iTunes previews. Before the first song the camera measures a resting baseline "
              "(neutral face, guarded against smiling or moving). At the end of each clip the camera reading is the average liking over the last 3 seconds, "
              "adjusted relative to that baseline so a neutral face is about 0. Then the person presses up or down.",
-             "- **Camera's call:** like if calibrated liking > 0, otherwise dislike. A reading exactly at the baseline counts as dislike.",
+             f"- **Camera's call:** like if calibrated liking > {LIKE_CUTOFF}, otherwise dislike. A reading at or below that counts as dislike.",
              f"- **Excluded:** a song is not judged if no face was seen or mean confidence < {MIN_CONFIDENCE}; those songs are counted above, not hidden.",
              "- **Agreement:** (camera-like and thumb-up) + (camera-dislike and thumb-down), divided by usable songs.",
              "- **95% interval:** Wilson score interval for a proportion, centre (p + z²/2n)/(1 + z²/n), half-width z·sqrt(p(1-p)/n + z²/4n²)/(1 + z²/n), z = 1.96.",
              "- **Kappa:** (agreement − expected) / (1 − expected), where expected is the agreement two independent raters would reach by chance given how often each says like.",
              f"- **Gate (proposed, fixed beforehand):** at least {GATE_MIN_SONGS} usable songs and agreement >= {GATE_ACCURACY:.0%}.",
              "- **Step 3b (per-person calibration):** the cut-off on the camera's calibrated liking starts at the general rule (0). It is moved to the value that best catches both this person's liked and disliked songs (best balanced accuracy on the training songs), "
-             f"then shrunk toward 0 by n / (n + {PRIOR_STRENGTH:.0f}) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). "
+             f"then shrunk toward {LIKE_CUTOFF} by n / (n + {PRIOR_STRENGTH:.0f}) so a handful of songs barely moves it. Each song is called by a cut-off fitted without it (leave-one-out). "
              f"Gate set before it was run on any data: accuracy >= {B_GATE_ACCURACY:.0%}, balanced accuracy >= {B_GATE_BALANCED:.0%}, AUC >= {B_GATE_AUC:.2f}, "
              f"and at least {B_MIN_PER_CLASS} songs of the rarer thumb (otherwise nothing can be judged). Moving a cut-off cannot change the ranking of songs, so AUC stays low if the camera has no signal.", "",
              "## 4. What these numbers do and do not show", "",
