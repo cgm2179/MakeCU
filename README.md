@@ -134,6 +134,14 @@ Put these in `shared/schemas/` and `shared/bus/` early so everyone can build aga
 - Each module should run alone with mocked inputs.
 - Keep large files (datasets, models, CAD exports) out of git.
 
+## Try It (fake inputs, no hardware)
+
+```
+python3 -m integration.orchestrator.run_loop --simulate 25   # simulated listener + phone
+python3 -m integration.orchestrator.run_loop                 # you type l / d, or "m s6" for a phone song change
+python3 -m unittest rl.tests.test_bandit music.tests.test_playlist integration.tests.test_core_loop -v
+```
+
 ## Status
 
-Scaffolding only. No component code yet.
+Core loop runs end to end with fake inputs: contextual-bandit RL, playlist control with manual override, and a motion stub. Cameras, audio, motors, and the real database are not connected yet.
