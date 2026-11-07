@@ -104,18 +104,36 @@ class TestGeminiPath(unittest.TestCase):
 
 
 class TestUnidentified(unittest.TestCase):
-    def cases(self):
-        yield {"identified": False}
-        yield dict(BILLIE, confidence=0.2)                       # not sure -> treated as unidentified
-        yield dict(BILLIE, genre="zzzzzz")                        # genre we cannot map
-        yield {k: v for k, v in BILLIE.items() if k != "energy"}  # missing a required number
-
     def test_unidentified_songs_are_skipped_cleanly(self):
-        for payload in self.cases():
+        for payload in ({"identified": False}, dict(BILLIE, confidence=0.2)):  # "don't know" / "not sure"
             lk, _ = lookup(ok(payload))
             r = lk.lookup("Zzyzx Quibble", "The Fictional Hedgehogs")
             self.assertIsNone(r.song, payload)
             self.assertEqual(r.source, "unidentified", payload)
+
+    def test_a_garbled_reply_is_an_error_not_unidentified_and_is_never_cached(self):
+        # Seen live: Gemini said identified=true (0.95) but dropped energy and ran valence on into endless zeros.
+        garbled = [dict(BILLIE, genre="zzzzzz"), {k: v for k, v in BILLIE.items() if k != "energy"},
+                   dict(BILLIE, valence="0.5" + "0" * 400 + "x")]
+        for payload in garbled:
+            with tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "c.json"
+                lk, fake = lookup(ok(payload), cache=path)
+                r = lk.lookup("Billie Jean", "Michael Jackson")
+                self.assertEqual((r.song, r.source), (None, "error"), payload)
+                self.assertEqual(len(fake.calls), 3)  # asked, then re-asked twice
+                self.assertFalse(path.exists() and "billie" in path.read_text())  # NOT remembered as unknown
+
+    def test_garbled_reply_then_good_reply_succeeds(self):
+        lk, fake = lookup(ok({k: v for k, v in BILLIE.items() if k != "energy"}), ok(BILLIE))
+        r = lk.lookup("Billie Jean", "Michael Jackson")
+        self.assertEqual(r.source, "gemini")
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_reply_length_is_capped(self):
+        lk, fake = lookup(ok(BILLIE))
+        lk.lookup("Billie Jean", "Michael Jackson")
+        self.assertLessEqual(fake.calls[0]["body"]["generationConfig"]["maxOutputTokens"], 4096)
 
     def test_extend_pool_skips_none_and_duplicates(self):
         lk, _ = lookup(ok(BILLIE))
@@ -181,6 +199,38 @@ class TestFailures(unittest.TestCase):
         lk, fake = lookup((429, b"{}"), ok(BILLIE))
         self.assertEqual(lk.lookup("Billie Jean", "Michael Jackson").source, "gemini")
         self.assertEqual(len(fake.calls), 2)
+
+    def test_daily_quota_429_fails_fast_with_a_clear_message(self):
+        body = json.dumps({"error": {"message": "quota", "details": [{"retryDelay": "40090s"}]}}).encode()
+        lk, fake = lookup((429, body))
+        r = lk.lookup("Billie Jean", "Michael Jackson")
+        self.assertEqual((r.song, r.source), (None, "error"))
+        self.assertEqual(len(fake.calls), 1)                     # did not burn retries on a quota that resets in hours
+        self.assertIn("11.1 h", r.reason)
+        self.assertIn("GEMINI_MODEL", r.reason)
+
+    def test_prompt_asks_for_short_numbers(self):
+        self.assertIn("2 decimal places", gf.build_prompt("A", "B"))
+
+    def test_network_timeouts_are_retried(self):
+        calls = []
+
+        def flaky(url, headers, body, timeout):
+            calls.append(1)
+            if len(calls) < 3:
+                raise GeminiError("network error: The read operation timed out")
+            return ok(BILLIE)
+
+        c = GeminiClient(api_key="k", transport=flaky, min_interval=0, sleep=lambda s: None)
+        self.assertEqual(SongLookup(gemini=c, cache_path=None, dataset=DATASET).lookup("Billie Jean", "Michael Jackson").source, "gemini")
+        self.assertEqual(len(calls), 3)
+
+        def dead(url, headers, body, timeout):
+            raise GeminiError("network error: offline")
+
+        c = GeminiClient(api_key="k", transport=dead, min_interval=0, sleep=lambda s: None)
+        r = SongLookup(gemini=c, cache_path=None, dataset=DATASET).lookup("Billie Jean", "Michael Jackson")
+        self.assertEqual((r.song, r.source), (None, "error"))  # gives up cleanly after the retries
 
     def test_schema_rejected_falls_back_to_plain_json_mode(self):
         lk, fake = lookup((400, b'{"error":{"message":"bad schema"}}'), ok(BILLIE))

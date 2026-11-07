@@ -21,7 +21,7 @@ from pathlib import Path
 from music.catalog.spotify_catalog import mood_from_audio
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.5-flash"  # override with GEMINI_MODEL if this name is retired
+DEFAULT_MODEL = "gemini-3.5-flash"  # gemini-2.5-* was retired for new users; override with GEMINI_MODEL if this one is too
 MIN_CONFIDENCE = 0.5  # below this Gemini is treated as not having identified the song
 MOODS = ("upbeat", "aggressive", "calm", "melancholy")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +46,11 @@ GENRE_SYNONYMS = {"r&b": "r-n-b", "rnb": "r-n-b", "r and b": "r-n-b", "rap": "hi
 
 class GeminiError(Exception):
     """The API call failed (network, rate limit, bad response). Not the same as 'song not identified'."""
+
+
+class GeminiUnusable(GeminiError):
+    """Gemini replied, but the reply was garbled or incomplete. Different from "I don't know this song"
+    (identified=false), which is a valid answer. Unusable replies are retried and never cached."""
 
 
 class GeminiNotConfigured(GeminiError):
@@ -84,18 +89,26 @@ def _clamp(x, lo, hi):
 
 
 def to_features(payload: dict) -> dict | None:
-    """Validate Gemini's JSON and map it to our schema. None = treat as not identified."""
+    """Validate Gemini's JSON and map it to our schema.
+
+    Returns None when Gemini says it does not know the song (identified=false, or confidence below
+    MIN_CONFIDENCE): a real answer. Raises GeminiUnusable when it claims to know the song but the
+    reply is missing or garbles required fields: a glitch, not an answer."""
     if not payload.get("identified"):
         return None
-    if float(payload.get("confidence", 1.0)) < MIN_CONFIDENCE:
+    try:
+        confidence = float(payload.get("confidence", 1.0))
+    except (TypeError, ValueError):
+        confidence = 1.0
+    if confidence < MIN_CONFIDENCE:
         return None
     genre = normalise_genre(str(payload.get("genre", "")))
     if genre is None:
-        return None
+        raise GeminiUnusable(f"genre {payload.get('genre')!r} could not be mapped to a known genre")
     try:
         energy, valence = _clamp(payload["energy"], 0, 1), _clamp(payload["valence"], 0, 1)
-    except (KeyError, TypeError, ValueError):
-        return None
+    except (KeyError, TypeError, ValueError) as err:
+        raise GeminiUnusable("reply claims the song is identified but energy/valence are missing or invalid") from err
     mood = str(payload.get("mood", "")).strip().lower()
     out = {"genre": genre, "mood": mood if mood in MOODS else mood_from_audio(valence, energy),
            "energy": energy, "valence": valence}
@@ -122,6 +135,7 @@ def build_prompt(title: str, artist: str) -> str:
         "- valence: 0..1 (Spotify valence; musical positiveness)\n"
         "- danceability: 0..1, tempo_bpm: beats per minute\n"
         "- confidence: 0..1, how sure you are that you know this song\n"
+        "Round every number to 2 decimal places (tempo_bpm to a whole number); never print long decimals.\n"
         "Respond with JSON only."
     )
 
@@ -135,6 +149,17 @@ RESPONSE_SCHEMA = {
     },
     "required": ["identified"],
 }
+
+
+def _retry_delay(raw: bytes) -> float | None:
+    """Seconds Google asks us to wait, from a 429 body's RetryInfo ("40090s"), if present."""
+    try:
+        for d in json.loads(raw).get("error", {}).get("details", []):
+            if "retryDelay" in d:
+                return float(str(d["retryDelay"]).rstrip("s"))
+    except (ValueError, AttributeError, TypeError):
+        pass
+    return None
 
 
 def _http_post(url: str, headers: dict, body: bytes, timeout: float) -> tuple[int, bytes]:
@@ -152,7 +177,8 @@ class GeminiClient:
     """Minimal Gemini REST client (no SDK needed). transport(url, headers, body, timeout) is injectable."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None, transport=None,
-                 timeout: float = 30.0, min_interval: float = 1.0, retries: int = 2, sleep=time.sleep):
+                 timeout: float = 30.0, min_interval: float = 1.0, retries: int = 2, sleep=time.sleep,
+                 answer_retries: int = 2):
         self._key = api_key or find_api_key()
         if not self._key and transport is None:
             raise GeminiNotConfigured("No Gemini API key. Set GEMINI_API_KEY (or GOOGLE_API_KEY), or put it in a "
@@ -161,6 +187,7 @@ class GeminiClient:
         self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
         self._transport = transport or _http_post
         self.timeout, self.min_interval, self.retries, self._sleep = timeout, min_interval, retries, sleep
+        self.answer_retries = answer_retries  # re-asks when a reply is garbled
         self._last = 0.0
         self.calls = 0
 
@@ -177,7 +204,18 @@ class GeminiClient:
                 self._sleep(wait)
             self._last = time.monotonic()
             self.calls += 1
-            status, raw = self._transport(url, headers, data, self.timeout)
+            try:
+                status, raw = self._transport(url, headers, data, self.timeout)
+            except GeminiError:  # network error / timeout: worth retrying a couple of times
+                if attempt < self.retries:
+                    self._sleep(2 * (attempt + 1))
+                    continue
+                raise
+            if status == 429:
+                delay = _retry_delay(raw)
+                if delay is not None and delay > 60:  # a quota that resets in minutes/hours: retrying now is pointless
+                    raise GeminiError(f"HTTP 429: quota exhausted for model {self.model!r}; Google says retry in "
+                                      f"~{delay / 3600:.1f} h ({delay:.0f} s). Use another GEMINI_MODEL or enable billing.")
             if status in (429, 500, 503) and attempt < self.retries:
                 self._sleep(2 * (attempt + 1))  # back off, then retry
                 continue
@@ -200,8 +238,18 @@ class GeminiClient:
 
     def lookup(self, title: str, artist: str) -> dict | None:
         """Return the mapped feature dict, or None if Gemini does not identify the song.
-        Raises GeminiError when the call itself fails."""
-        config = {"temperature": 0, "responseMimeType": "application/json"}
+        Raises GeminiError when the call fails or the reply stays unusable after a few re-asks."""
+        last = None
+        for _ in range(1 + self.answer_retries):
+            try:
+                return self._ask_once(title, artist)
+            except GeminiUnusable as err:  # garbled reply: ask again (temperature 0 is not fully deterministic)
+                last = err
+        raise last
+
+    def _ask_once(self, title: str, artist: str) -> dict | None:
+        # maxOutputTokens bounds the reply: without it, a degenerate reply can run on for thousands of characters
+        config = {"temperature": 0, "responseMimeType": "application/json", "maxOutputTokens": 2048}
         body = {"contents": [{"role": "user", "parts": [{"text": build_prompt(title, artist)}]}],
                 "generationConfig": dict(config, responseSchema=RESPONSE_SCHEMA)}
         try:
@@ -217,7 +265,7 @@ class GeminiClient:
             text = reply["candidates"][0]["content"]["parts"][0]["text"]
             payload = json.loads(text)
         except (KeyError, IndexError, TypeError, ValueError) as err:
-            raise GeminiError(f"unusable response from Gemini: {str(reply)[:200]}") from err
+            raise GeminiUnusable(f"unusable response from Gemini: {str(reply)[:200]}") from err
         if not isinstance(payload, dict):
-            raise GeminiError(f"unexpected JSON from Gemini: {text[:120]!r}")
+            raise GeminiUnusable(f"unexpected JSON from Gemini: {text[:120]!r}")
         return to_features(payload)
