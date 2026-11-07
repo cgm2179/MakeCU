@@ -32,6 +32,31 @@ def import_perception_cv():
 
 
 MIN_SAMPLE_CONFIDENCE = 0.1
+MAX_BASELINE = 0.15  # a neutral face reads at or below ~0 on this model; higher means a smile
+MAX_SPREAD = 0.25    # a still face gives a steady reading; more spread means it was moving
+
+
+def check_baseline(baseline: float, spread: float, max_baseline: float = MAX_BASELINE,
+                   max_spread: float = MAX_SPREAD) -> list[str]:
+    """Reasons a calibration should be rejected (empty list = accept)."""
+    problems = []
+    if baseline > max_baseline:
+        problems.append(f"baseline {baseline:+.2f} is above {max_baseline:+.2f}, so you looked happy, not neutral")
+    if spread > max_spread:
+        problems.append(f"spread {spread:.2f} is above {max_spread:.2f}, so your face was moving too much")
+    return problems
+
+
+def speak(text: str) -> None:
+    """Say a short cue out loud (macOS `say`), because the person is looking at the camera, not
+    the terminal. Falls back to the terminal bell. Never blocks."""
+    import shutil
+    import subprocess
+
+    if shutil.which("say"):
+        subprocess.Popen(["say", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        print("\a", end="", flush=True)
 
 
 def calibrate_liking(raw: float, baseline: float) -> float:
@@ -147,24 +172,50 @@ class CameraFeedback:
                 self._samples.append((time.time(), r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
             time.sleep(0.1)
 
-    def calibrate(self, seconds: float | None = None, say=print, discard: float = 2.0) -> float:
-        """Measure the resting liking: the person sits with a relaxed, neutral face (no music).
-        The first `discard` seconds are thrown away while the tracker's smoothing settles; the
-        median of the rest is the baseline."""
+    def calibrate(self, seconds: float | None = None, say=print, discard: float = 2.0,
+                  countdown: int = 3, count_step: float = 1.0, max_attempts: int = 3,
+                  max_baseline: float = MAX_BASELINE, max_spread: float = MAX_SPREAD,
+                  speak_fn=speak) -> float:
+        """Measure the resting liking while the person holds a relaxed, NEUTRAL face (no music).
+
+        Each attempt: a "3, 2, 1" countdown (printed and spoken), then `seconds` of measuring; the
+        first `discard` seconds are thrown away while the tracker's smoothing settles and the
+        median of the rest is the baseline. A baseline above `max_baseline` (smiling) or a spread
+        above `max_spread` (moving) is rejected and the person is asked to try again, up to
+        `max_attempts` times, after which this raises instead of using a bad baseline."""
         seconds = seconds or self.calibrate_seconds
-        say(f"Calibrating: sit with a relaxed, NEUTRAL face for {seconds:.0f} s (first {discard:.0f} s ignored)...")
-        start = time.time()
-        time.sleep(seconds)
-        vals = [lk for t, lk, _ in list(self._samples) if t >= start + discard]
-        if len(vals) < 10:
-            raise RuntimeError(f"Calibration failed: your face was seen in only {len(vals)} samples. "
-                               "Face the camera, check the lighting, and retry.")
-        self.baseline = statistics.median(vals)
-        self.baseline_std = statistics.pstdev(vals)
-        say(f"Baseline resting liking = {self.baseline:+.2f}  (spread {self.baseline_std:.2f}, {len(vals)} samples)")
-        if self.baseline_std > 0.25:
-            say("  warning: your resting reading moved a lot during calibration; hold still and neutral for a cleaner baseline")
-        return self.baseline
+        last_problem = "unknown"
+        for attempt in range(1, max_attempts + 1):
+            if countdown > 0:
+                say(f"Calibration {attempt}/{max_attempts}: get ready...")
+                for n in range(countdown, 0, -1):
+                    say(f"  {n}...")
+                    speak_fn(str(n))
+                    time.sleep(count_step)
+            say(f"HOLD A NEUTRAL FACE for {seconds:.0f} s, no smiling (first {discard:.0f} s ignored)")
+            speak_fn("hold a neutral face")
+            start = time.time()
+            time.sleep(seconds)
+            vals = [lk for t, lk, _ in list(self._samples) if t >= start + discard]
+            if len(vals) < 10:
+                last_problem = (f"your face was seen in only {len(vals)} samples; face the camera "
+                                "and check the lighting")
+                problems = [last_problem]
+            else:
+                baseline, spread = statistics.median(vals), statistics.pstdev(vals)
+                problems = check_baseline(baseline, spread, max_baseline, max_spread)
+                if not problems:
+                    self.baseline, self.baseline_std = baseline, spread
+                    say(f"Baseline resting liking = {baseline:+.2f}  (spread {spread:.2f}, {len(vals)} samples) - accepted")
+                    speak_fn("thanks")
+                    return baseline
+                last_problem = f"baseline {baseline:+.2f}, spread {spread:.2f}: " + "; ".join(problems)
+            say(f"Calibration rejected: {'; '.join(problems)}")
+            if attempt < max_attempts:
+                say("  Let's try again.")
+                speak_fn("let's try again")
+        raise RuntimeError(f"Calibration failed after {max_attempts} attempts ({last_problem}). "
+                           "Sit still with a relaxed neutral face, facing the camera.")
 
     def _cal(self, raw: float) -> float:
         return raw if self.baseline is None else calibrate_liking(raw, self.baseline)

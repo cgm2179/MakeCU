@@ -13,7 +13,7 @@ from music.catalog.songs import SONGS
 HAVE_DEPS = all(importlib.util.find_spec(m) for m in ("cv2", "fastapi", "uvicorn", "numpy"))
 
 
-from perception.emotion.camera_reaction import calibrate_liking
+from perception.emotion.camera_reaction import calibrate_liking, check_baseline
 
 
 class TestCalibrationMath(unittest.TestCase):
@@ -30,6 +30,14 @@ class TestCalibrationMath(unittest.TestCase):
         self.assertEqual(ys, sorted(ys))
         self.assertLess(calibrate_liking(-0.8, b), 0)   # worse than resting -> negative
         self.assertGreater(calibrate_liking(-0.2, b), 0)  # better than resting -> positive, even though raw is negative
+
+    def test_guard_thresholds(self):
+        self.assertEqual(check_baseline(-0.45, 0.15), [])              # a normal resting face
+        self.assertEqual(check_baseline(0.15, 0.25), [])               # exactly on the limits is accepted
+        self.assertEqual(len(check_baseline(0.56, 0.27)), 2)           # the smiling run from before: both reasons
+        self.assertIn("happy", check_baseline(0.20, 0.10)[0])
+        self.assertIn("moving", check_baseline(-0.30, 0.30)[0])
+        self.assertEqual(len(check_baseline(0.20, 0.10)), 1)
 
     def test_extreme_baselines_do_not_divide_by_zero(self):
         for b in (-1.0, 1.0):
@@ -133,7 +141,7 @@ class TestCalibratedSignal(unittest.TestCase):
         fb, liked = self.make(read_window_seconds=0.6)
         fb.start()
         try:
-            base = fb.calibrate(seconds=4, say=lambda *a: None)
+            base = fb.calibrate(seconds=4, say=lambda *a: None, countdown=0, speak_fn=lambda t: None)
             self.assertTrue(-0.8 < base < -0.2, base)          # a resting face reads negative
             self.assertAlmostEqual(fb._cal(base), 0.0)         # ...and calibrates to zero
             jazz = next(x for x in SONGS if liked(x))
@@ -149,13 +157,59 @@ class TestCalibratedSignal(unittest.TestCase):
         self.assertLess(down.group_liking, -0.3)
         self.assertGreater(up.group_liking, down.group_liking + 0.8)
 
+    def test_guard_rejects_a_smile_then_accepts_a_neutral_retry_with_countdown(self):
+        from perception.emotion.taste_mock_model import LIKED
+
+        fb, _ = self.make()
+        fb.model.resting_probs = dict(LIKED)  # person is smiling during the first attempt
+        said, spoken = [], []
+
+        def say(msg):
+            said.append(msg)
+            if msg.startswith("Calibration rejected"):
+                from perception.emotion.taste_mock_model import RESTING
+                fb.model.resting_probs = dict(RESTING)  # ...then relaxes to a neutral face
+
+        fb.start()
+        try:
+            base = fb.calibrate(seconds=3, discard=1, say=say, count_step=0.05, speak_fn=spoken.append)
+        finally:
+            fb.stop()
+        text = "\n".join(said)
+        self.assertEqual(text.count("Calibration rejected"), 1)
+        self.assertIn("happy, not neutral", text)
+        self.assertIn("Let's try again", text)
+        self.assertIn("accepted", text)
+        self.assertLessEqual(base, 0.15)
+        # countdown 3, 2, 1 then the hold cue, twice (original attempt + retry); also spoken aloud
+        cue = ["3", "2", "1", "hold a neutral face"]
+        self.assertEqual(spoken[:4], cue)
+        self.assertEqual([x for x in spoken if x in ("3", "2", "1")], ["3", "2", "1", "3", "2", "1"])
+        self.assertEqual(spoken.count("hold a neutral face"), 2)
+        self.assertIsNotNone(fb.baseline)
+
+    def test_guard_gives_up_after_max_attempts_instead_of_using_a_bad_baseline(self):
+        from perception.emotion.taste_mock_model import LIKED
+
+        fb, _ = self.make()
+        fb.model.resting_probs = dict(LIKED)  # smiling the whole time
+        fb.start()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "after 2 attempts.*happy, not neutral"):
+                fb.calibrate(seconds=3, discard=1, say=lambda *a: None, countdown=0, max_attempts=2,
+                             speak_fn=lambda t: None)
+        finally:
+            fb.stop()
+        self.assertIsNone(fb.baseline)  # nothing was stored
+
     def test_calibration_fails_loudly_if_nobody_is_in_view(self):
         fb, _ = self.make(empty_rounds={1})
         fb.start()
         try:
             fb.begin_song(SONGS[0])  # round 1 = nobody in view
             with self.assertRaisesRegex(RuntimeError, "Calibration failed"):
-                fb.calibrate(seconds=3, say=lambda *a: None)
+                fb.calibrate(seconds=3, say=lambda *a: None, countdown=0, max_attempts=1,
+                             speak_fn=lambda t: None)
         finally:
             fb.stop()
 

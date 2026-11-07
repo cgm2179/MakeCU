@@ -26,6 +26,7 @@ class TasteMockModel:
         self.person_likes = [False] * n_faces
         self.present = True
         self.resting = True  # until the first song starts
+        self.resting_probs = dict(RESTING)  # tests can swap in a smiling face to trigger the guard
 
     def set_song(self, song, present=True) -> None:
         self.present = present
@@ -41,6 +42,6 @@ class TasteMockModel:
         faces = []
         for i in range(self.n):
             cx = w * (0.3 + 0.4 * i / max(self.n - 1, 1))
-            probs = dict(RESTING if self.resting else LIKED if self.person_likes[i] else DISLIKED)
+            probs = dict(self.resting_probs if self.resting else LIKED if self.person_likes[i] else DISLIKED)
             faces.append(self._Face((int(cx - fw / 2), int(h * 0.4), fw, fw), probs, 0.9))
         return faces
