@@ -40,21 +40,20 @@ Done when: you have answered a to e.
 
 PASTE THIS TO CLAUDE:
   Read docs/THREE_LAYER_CHECKPOINTS.md. Step 1 decisions: (a) ok (b) ok (c) ok
-  (d) yes (e) accept. Record these in the doc as agreed, then tell me what Step 2 is.
+  (d) yes (e) accept. Record these in the doc as agreed, then tell me what Step 3 is.
 
 
-STEP 2 - Claude builds the scoring tool and the save feature (you wait, about 1 hour)
------------------------------------------------------------------------------------
-Claude builds (1) a command that scores any model on rated songs, and (2) saving your profile so
-the robot remembers you after a restart. Nothing for you to do except check the result.
+STEP 2 - Scoring tool and save feature (DONE)
+---------------------------------------------
+Claude already built these (rl/eval.py and rl/agent/profile.py, branch rl/eval-and-profiles).
+All tests pass. One command prints scores for "random", "popularity only" and "current bandit":
+  python3 -m rl.eval --demo        (uses made-up labels, just to see it work)
 
-Done when: Claude shows the tests passing and one command that prints scores for
-"random", "popularity only" and "current bandit".
+Only thing left: make sure it is merged into main (open the PR for rl/eval-and-profiles).
 
-PASTE THIS TO CLAUDE:
-  Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoints P0.5 (evaluation harness) and
-  P0.4 (save/load user profile, with data/profiles/ added to .gitignore first). Run the tests
-  and show me the output. Do not commit yet.
+PASTE THIS TO CLAUDE (only if it is not committed yet):
+  Commit the Step 2 work (evaluation harness and profile save/load) on branch
+  rl/eval-and-profiles and push it.
 
 
 STEP 3 - Check that the camera agrees with you (about 30 minutes)
@@ -220,7 +219,7 @@ IF SOMETHING GOES WRONG
 PROGRESS TRACKER (tick as you go)
 ---------------------------------
 [ ] Step 1  Decisions made
-[ ] Step 2  Scoring tool and save feature built
+[x] Step 2  Scoring tool and save feature built (PR pending)
 [ ] Step 3  Camera vs thumbs checked (want 75% or more)
 [ ] Step 4  150 songs rated
 [ ] Step 5  Re-rated 20 songs (want 80% within 1 point)
