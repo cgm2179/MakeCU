@@ -24,6 +24,7 @@ from shared.schemas.messages import Filter, FilterSource
 
 # In --simulate mode the fake phone changes the song mid-way at these steps.
 DEFAULT_OVERRIDES = {6: "s6", 14: "s11"}
+MAX_SKIPS = 15  # give up after this many unplayable songs in a row
 
 
 def describe(song) -> str:
@@ -46,19 +47,22 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 
 
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
-        round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None):
+        round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
+        player=None, wait_for_playback=False):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
     listener     : fake listener with .react(song); default = SimulatedListener
     taste_shift  : {step: genres} changes a TasteListener's taste at that step
+    player       : audio output (AudioPlayer); songs with no playable audio are skipped
+    wait_for_playback : wait for each clip to finish before taking the reaction
     """
     say = print if verbose else (lambda *a, **k: None)
     bus = Bus()
     flt = Filter(sources=(FilterSource("event", event),))
     pool = pool if pool is not None else get_candidates(flt)
     agent = agent or BanditAgent(seed=seed)
-    controller = PlaylistController(pool, bus)
+    controller = PlaylistController(pool, bus, player)
     phone = FakePhone(bus)
     if listener is None and simulate_rounds:
         listener = SimulatedListener(seed=seed or 0)
@@ -74,6 +78,7 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     motion.start()  # robot movement runs on its own; music events never touch it
 
     emotion, step, last_id, forced = "neutral", 0, None, None
+    unavailable: set = set()  # songs the audio output could not play
     log, rewards = [], []
     while simulate_rounds is None or step < simulate_rounds:
         step += 1
@@ -81,20 +86,38 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         if forced:  # the user asked for this song from the phone
             song, mode, forced = forced, "phone", None
         else:
-            song, mode = agent.choose_next_song(pool, last_id, ctx, recent_ids=controller.history[-4:])
-        controller.play(song)
+            playable = [x for x in pool if x.song_id not in unavailable] or pool
+            song, mode = agent.choose_next_song(playable, last_id, ctx, recent_ids=controller.history[-4:])
+        skipped_now = 0
+        while not controller.play(song):  # no playable audio: skip to the next pick
+            unavailable.add(song.song_id)
+            skipped_now += 1
+            say(f"  no preview for {song.title} by {song.artist} -> skipping to next pick")
+            candidates = [s for s in pool if s.song_id not in unavailable]
+            if skipped_now >= MAX_SKIPS or not candidates:
+                say("Too many songs without audio; stopping.")
+                song = None
+                break
+            song, mode = agent.choose_next_song(candidates, last_id, ctx,
+                                                recent_ids=controller.history[-4:])
+        if song is None:
+            break
         if taste_shift and step in taste_shift:
             listener.set_liked(taste_shift[step])
             say(f"\n*** listener's taste changes: now likes {sorted(taste_shift[step])} ***")
         say(f"\n[{step}] Now playing: {describe(song)} "
             f"[{mode}, predicted {agent.predict(song, ctx):+.2f}]")
         say(f"  context: filter={ctx.filter_key}, emotion={ctx.emotion}")
+        if player is not None and getattr(player, "last_url", None):
+            say(f"  playing iTunes preview: {player.last_url.rsplit('/', 1)[-1]}")
 
         if listener and step in overrides:  # user taps another song on their phone, mid-song
             phone.change_song(overrides[step])
             say(f"  phone: user requested {overrides[step]} (current song keeps playing)")
 
-        if listener:
+        if wait_for_playback and player is not None:
+            player.wait()  # let the clip play out before reading the reaction
+        elif listener:
             time.sleep(round_delay)  # a real song would take much longer
         reaction = listener.react(song) if listener else get_group_reaction(song.song_id, phone)
         if reaction is None:
@@ -122,6 +145,7 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             print_learning(agent, Context(ctx.filter_key, emotion))
         last_id = song.song_id
 
+    controller.stop()
     motion.stop()
     say("\n=== Top unplayed songs the agent would recommend ===")
     for emo in EMOTIONS:

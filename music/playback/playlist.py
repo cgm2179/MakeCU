@@ -12,16 +12,25 @@ from shared.schemas.messages import Song
 
 
 class PlaylistController:
-    def __init__(self, catalog: list[Song], bus: Bus):
+    def __init__(self, catalog: list[Song], bus: Bus, player=None):
         self.catalog = {s.song_id: s for s in catalog}
         self.bus = bus
+        self.player = player  # optional audio output, e.g. music.playback.audio.AudioPlayer
         self.now_playing: Song | None = None
         self.history: list[str] = []
 
-    def play(self, song: Song) -> None:
-        # Real version: hand `song` to the audio output here.
+    def play(self, song: Song) -> bool:
+        """Start the song. Returns False (and plays nothing) if the audio output has no
+        playable audio for it, so the caller can skip to another pick."""
+        if self.player is not None and not self.player.play(song):
+            return False
         self.now_playing = song
         self.history.append(song.song_id)
+        return True
+
+    def stop(self) -> None:
+        if self.player is not None:
+            self.player.stop()
 
     def played_ids(self) -> set:
         return set(self.history)

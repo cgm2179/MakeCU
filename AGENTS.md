@@ -79,6 +79,12 @@ Music topics are never consumed by motion, and the reverse.
 - The bandit buckets `energy`, `valence`, `danceability`, `tempo` (plus genre, artist, mood). Do not add more buckets without re-testing: acousticness/instrumentalness buckets slowed learning.
 - Tests for the dataset need the CSV and are skipped without it.
 
+## Audio Playback (implemented)
+
+- `PlaylistController(catalog, bus, player=None).play(song) -> bool`. With an `AudioPlayer` it plays the song's iTunes preview; it returns `False` (and records nothing) when no preview exists, and the loop then skips to another pick and never retries that song.
+- `AudioPlayer.play(song)` is non-blocking; `wait()`, `stop()`, `close()` control it. Swap in your own audio output by passing any object with `play(song) -> bool`, `wait()`, `stop()`.
+- Matching requires the same artist and a similar title; a weak match is treated as "no preview" rather than playing the wrong song.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |

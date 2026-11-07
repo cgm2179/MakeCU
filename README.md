@@ -149,12 +149,20 @@ python3 -m integration.orchestrator.run_mood_demo --mood gym --rounds 60 --likes
 python3 -m integration.orchestrator.run_mood_demo --mood gym --likes punk-rock,emo --sweep 24   # many seeds
 ```
 
+## Real Audio Playback (iTunes previews)
+
+`music/playback/audio.py` looks each chosen song up on the free iTunes Search API (no key; only the title and artist are sent), downloads its 30-second preview and plays it through the computer speaker (`afplay` on macOS, or `ffplay`/`mpv`). Playback is non-blocking, so the motion system is not held up. Songs with no matching preview are skipped and the bandit picks again; about 7 in 10 songs in the gym pool have one.
+
+```
+python3 -m integration.orchestrator.run_playback_demo --mood gym --songs 3 --clip-seconds 10
+```
+
 ## Try It (fake inputs, no hardware)
 
 ```
 python3 -m integration.orchestrator.run_loop --simulate 25   # simulated listener + phone
 python3 -m integration.orchestrator.run_loop                 # you type l / d, or "m s6" for a phone song change
-python3 -m unittest rl.tests.test_bandit music.tests.test_playlist music.tests.test_dataset_pipeline integration.tests.test_core_loop -v
+python3 -m unittest rl.tests.test_bandit music.tests.test_playlist music.tests.test_dataset_pipeline music.tests.test_audio integration.tests.test_core_loop -v
 ```
 
 ## Status
