@@ -25,7 +25,7 @@ void move_motor(int steps_to_move, int direction) {
     for (int i = 0; i < 4; i++) {
       // If direction is 1, go forward. If -1, go backward.
       int step_index = (direction == 1) ? i : (3 - i);
-      
+
       digitalWrite(IN1, steps[step_index][0]);
       digitalWrite(IN2, steps[step_index][1]);
       digitalWrite(IN3, steps[step_index][2]);
@@ -39,8 +39,9 @@ void loop() {
   // Move forward 500 steps (Roughly a 90-degree turn with internal gears)
   move_motor(500, 1);
   delay(1000); // Wait 1 second
-  
+
   // Move backward 500 steps
   move_motor(500, -1);
   delay(1000); // Wait 1 second
+
 }
