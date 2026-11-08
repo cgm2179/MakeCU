@@ -142,6 +142,10 @@ Music topics are never consumed by motion, and the reverse.
 - `python3 -m rl.personal_layer --user adi`: cross-validated comparison (popularity / base-only / bandit / logistic from scratch / fine-tuned), learning curve, and saves `data/profiles/<user>_personal_v2.json`. `PersonalLayer(base)` with no data equals the base exactly; `load_personal(path, base)` refuses a layer made on a different base (hash). Design and marks: `reports/step07_preregistration.md`.
 - Result: fine-tuned +0.021 over base-only (mark +0.05), -0.008 vs logistic from scratch, popularity-only still best (0.712 vs 0.686): Layer 2 gate FAIL (reports/step07_personal_layer.md). Base 1,477 B + layer 437 B = 1,914 B (ESP32 budget 32 KB).
 
+## Camera Replication (implemented, Step 3d)
+
+- Fresh quiet-room session: `run_agreement_check --user adi_rep --songs 60 --setting quiet --moods gym,party,chill,happy,sad,study --exclude-seen adi --rank-with adi --seed 7` (`--exclude-seen` skips every song already rated or thumbed; `--rank-with` alternates the fine-tuned model's top picks with random ones so both thumbs occur). Then `python3 -m rl.camera_replication --train adi --new adi_rep` applies the rule fixed in `reports/step03d_preregistration.md` (>= 40 songs, >= 12 of each thumb, AUC >= 0.70, gain >= +0.05 over the old reading) and writes `reports/step03d_camera_replication.md`.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
