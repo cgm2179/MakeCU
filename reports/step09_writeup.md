@@ -1,3 +1,5 @@
+> **Superseded by `step10_writeup.md`** (the final L3.4 write-up, with Steps 6 to 9, the camera replication and the new-user check). Kept as the earlier draft; the numbers below for the first live session are still correct.
+
 # Learning a listener's music taste from their reactions: results, including what failed
 
 One main user (Adi), about 700 labelled interactions, 24-hour hackathon build. Every threshold below was fixed before the data
