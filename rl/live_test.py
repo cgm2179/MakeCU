@@ -125,9 +125,21 @@ def format_text(a):
     return "\n".join(lines)
 
 
-def build_live_report(rows, tests, user, profile_note=""):
+MODEL_TEXT = {
+    "profile": ("the saved ratings-trained profile (Step 6)",
+                "minus every song already rated (the profile was trained on those)",
+                "The profile was trained on every earlier rating, so this session is its first test on songs it never saw."),
+    "fine-tuned": ("the Step 7 model: the frozen Last.fm base (base-v2-lastfm1k) plus the person's personal layer",
+                   "minus every song already rated, thumbed in the camera sessions, or thumbed in an earlier live session "
+                   "(the personal layer was fitted on those thumbs)",
+                   "The personal layer was fitted on every earlier thumb, so this session is its first test on songs it never saw."),
+}
+
+
+def build_live_report(rows, tests, user, profile_note="", model="profile"):
     a = analyse(rows)
-    parts = [f"# Step 7 report: live session (personal model vs popularity vs random)", "",
+    what, excl, limit = MODEL_TEXT[model]
+    parts = [f"# Step 8 report: live session (personal model vs popularity vs random), {user}", "",
              f"- Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  ", f"- User: {user}", "",
              "## 1. Unit tests", "",
              f"- Ran {tests['ran']}: {tests['ran'] - tests['failed'] - tests['errors'] - tests['skipped']} passed, "
@@ -136,25 +148,26 @@ def build_live_report(rows, tests, user, profile_note=""):
              "## 3. Method", "",
              "- Three conditions mixed in random blocks of three; the person was not told which condition a song came from.",
              f"- random: any song in the pool. popularity: one of the {TOP_K} most popular left. personal: one of the {TOP_K} songs "
-             "the saved profile predicts highest (profile frozen; it does not learn during the test).",
-             "- Pool: songs from the gym/party/chill/happy/sad/study moods, minus every song already rated (the profile was trained "
-             "on those), one song per artist.",
+             f"that {what} scores highest (frozen; it does not learn during the test).",
+             f"- Pool: songs from the gym/party/chill/happy/sad/study moods, {excl}, one song per artist.",
              "- Label: the explicit thumb after each song. The song stops as soon as the thumb is given.",
              "- Share liked = thumbs up / songs. 95% interval: Wilson. Difference range: normal approximation.",
              "- Gate fixed beforehand: personal >= popularity + 15 points and >= random + 25 points, 40+ songs per condition.", "",
              "## 4. Limits", "",
              "- One person, 40 songs per condition: a share is known only to about +/-15 points, so a 15-point gap is suggestive.",
              "- The camera is not used here. The thumb is the label.",
-             "- The profile was trained on every earlier label, so this session is its first test on songs it never saw.",
+             f"- {limit}",
              profile_note]
     return "\n".join(p for p in parts if p is not None) + "\n"
 
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="Summarise a live session and write reports/step07_live_session.md.")
+    ap = argparse.ArgumentParser(description="Summarise a live session and write reports/step08_live_session[_USER].md.")
     ap.add_argument("--user", default="adi")
     ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--model", choices=tuple(MODEL_TEXT), default="profile",
+                    help="which model drove condition C in this session (fine-tuned = Step 7 base + personal layer)")
     a = ap.parse_args(argv)
     rows = load_rows(live_path(a.user), a.user)
     if not rows:
@@ -163,7 +176,7 @@ def main(argv=None):
     if not a.no_report:
         from rl.report import run_unit_tests, write_report
         tests = run_unit_tests()
-        path = write_report(7, "live_session", build_live_report(rows, tests, a.user))
+        path = write_report(8, "live_session" if a.user == "adi" else f"live_session_{a.user}", build_live_report(rows, tests, a.user, model=a.model))
         print(f"Tests: ran {tests['ran']}, failed {tests['failed']}, errors {tests['errors']}, skipped {tests['skipped']}")
         print(f"Report written to {path}")
     return 0

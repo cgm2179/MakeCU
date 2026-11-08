@@ -1,4 +1,4 @@
-# Step 7 report: live session (personal model vs popularity vs random)
+# Step 8 report (first live session, v1): old ratings-trained profile vs popularity vs random
 
 - Generated: 2026-11-07 23:40:47  
 - User: adi
