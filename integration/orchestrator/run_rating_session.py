@@ -153,7 +153,7 @@ def hunt_order(plan_pool, rows, by_id, seed=0):
     from rl.eval import BanditModel
     seen = {r["song_id"] for r in rows}
     train = [(by_id[r["song_id"]], 1 if r["preference"] >= rt.LIKE_AT else 0) for r in rows
-             if r["song_id"] in by_id and (r["preference"] >= rt.LIKE_AT or r["preference"] <= rt.DISLIKE_AT)]
+             if r["split"] != "test" and r["song_id"] in by_id and (r["preference"] >= rt.LIKE_AT or r["preference"] <= rt.DISLIKE_AT)]
     fresh = [x for x in plan_pool if x.song_id not in seen]
     rest = list(fresh)
     random.Random(seed).shuffle(rest)
