@@ -67,6 +67,10 @@ Perception feeds both systems: group reactions go to the RL agent, and user pose
 - Motors/actuators and a chassis for movement
 - Compute board (to be decided)
 
+## Results and Evaluation
+
+How well does DJ Bot work? Every pass mark was written down before the data was collected, and the results include both what worked and what did not yet. Start with the [one-page summary](reports/step10_writeup.md); the [full write-up](reports/step10_writeup_full.md) has every number and the pre-registrations are in `reports/`.
+
 ## Team Ownership
 
 Each person owns separate top-level folders. Cross-area contracts live in `shared/`, so changes there need a heads-up to the team. Exact variable names are in [AGENTS.md](AGENTS.md).
