@@ -8,3 +8,4 @@ data/profiles/
 data/eval/
 data/ratings/
 data/agreement/
+.venv/
