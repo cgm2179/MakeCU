@@ -150,6 +150,22 @@ def smart_order(songs, rated_rows, by_id, seed=0):
     return out
 
 
+def ft_order(songs, layer, seed=0):
+    """Order songs to alternate the fine-tuned model's top picks with random ones, so a session gets both liked and disliked songs
+    (used for the camera replication, where at least 12 of each thumb are needed)."""
+    from rl.agent.context import Context
+    best = sorted(songs, key=lambda x: -layer.logit(x))
+    rest = list(songs)
+    random.Random(seed).shuffle(rest)
+    out, seen = [], set()
+    for a, b in zip(best, rest):
+        for x in (a, b):
+            if x.song_id not in seen:
+                seen.add(x.song_id)
+                out.append(x)
+    return out
+
+
 def build_songs(seed=0, moods=MOODS):
     from music.catalog.songs import get_candidates
     from shared.schemas.messages import Filter, FilterSource
@@ -185,6 +201,10 @@ def main(argv=None):
                     help="tag this session: quiet room alone, or busy (several people, music up, movement)")
     ap.add_argument("--group-size", type=int, default=1,
                     help="people in front of the camera; with more than 1 you enter how many liked each song")
+    ap.add_argument("--exclude-seen", metavar="SUBJECT", default=None,
+                    help="skip every song SUBJECT has already rated or thumbed (ratings, camera sessions, live sessions)")
+    ap.add_argument("--rank-with", metavar="SUBJECT", default=None,
+                    help="order songs to alternate SUBJECT's fine-tuned model's top picks with random ones (gets both thumbs)")
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--demo", action="store_true", help="scripted fake face and thumbs, no camera or audio (writes to a demo file)")
     ap.add_argument("--seed", type=int, default=0)
@@ -231,6 +251,22 @@ def main(argv=None):
         by_id = {x.song_id: x for x in load_spotify()}
         songs = smart_order(songs, prior, by_id, a.seed)
         print(f"Smart picking from {len(prior)} earlier thumbs ({sum(r['thumb'] for r in prior)} liked).")
+    if a.exclude_seen:
+        from integration.orchestrator.run_live_session import seen_song_ids
+        seen = seen_song_ids(a.exclude_seen)
+        before = len(songs)
+        songs = [x for x in songs if x.song_id not in seen]
+        print(f"Excluding {before - len(songs)} songs {a.exclude_seen} has already rated or thumbed; {len(songs)} left.")
+    if a.rank_with:
+        from rl import base_lastfm as bl
+        from rl import personal_layer as pl
+        try:
+            base = bl.load_base(bl.MODEL_DIR / "base_model_v2.json")
+            layer = pl.load_personal(pl.PROFILE_DIR / f"{a.rank_with}_personal_v2.json", base)
+        except (OSError, ValueError) as e:
+            raise SystemExit(f"{e}\nNeeds models/base_model_v2.json and data/profiles/{a.rank_with}_personal_v2.json")
+        songs = ft_order(songs, layer, a.seed)
+        print(f"Songs ordered to alternate {a.rank_with}'s model's top picks with random ones.")
     feedback.start()
     try:
         if not a.demo and a.calibrate_seconds > 0:
@@ -245,7 +281,10 @@ def main(argv=None):
     print(f"\nRated {n} songs this run; {len(rows)} saved in {out_csv}\n")
     if rows:
         print(ag.format_text(ag.analyse(rows)))
-        print(f"\nNext: python3 -m rl.report --step 3 --agreement {out_csv} --user {user}")
+        if a.exclude_seen:
+            print(f"\nNext (replication): python3 -m rl.camera_replication --train {a.exclude_seen} --new {user}")
+        else:
+            print(f"\nNext: python3 -m rl.report --step 3 --agreement {out_csv} --user {user}")
     return 0
 
 
