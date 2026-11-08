@@ -9,3 +9,4 @@ data/eval/
 data/ratings/
 data/agreement/
 .venv/
+models/

@@ -127,6 +127,10 @@ Music topics are never consumed by motion, and the reverse.
 - `python3 -m integration.orchestrator.run_live_session --user adi` plays songs from three hidden conditions in random blocks of three (random / one of the 10 most popular / one of the 10 the saved profile likes best), asks for a thumb at once, and stops the song the moment you answer. Never plays a song the profile was trained on. Saved to `data/live/<user>.csv` (git-ignored); resumes after `q`.
 - `python3 -m rl.live_test --user adi` summarises and writes `reports/step07_live_session.md`. Gate: personal >= popularity + 15 points and >= random + 25 points, 40+ songs per condition (about +/-15 points of noise at that size).
 
+## Base Model v1 (implemented)
+
+- `python3 -m rl.base_model --user adi` trains a logistic-regression taste model on the user's thumbs (agreement + live), saves checkpoints every 40 epochs to `models/checkpoints/`, the best one to `models/base_model_v1.json` (self-contained, SHA-256 of the weights, `load_model` refuses a changed file), plus `models/training_history.csv` and `models/training_curve.svg`. `models/` is git-ignored. Split 70/15/15; the test split is read once. It does not beat popularity-only (reports/step06b_base_model.md).
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
