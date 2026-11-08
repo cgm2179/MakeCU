@@ -136,6 +136,11 @@ Music topics are never consumed by motion, and the reverse.
 - `python3 -m rl.base_lastfm` trains the base on other people's listening (Last.fm 1K in `data/external/lastfm1k/`, git-ignored, non-commercial licence). Definitions and pass marks are in `reports/step06_preregistration.md`; do not change them after seeing results. Result: beats popularity by +0.054 AUC on 126 held-out users (first 600-epoch run +0.025; test users read twice), match rate 4.9% (mark 30%) and quality-vs-preference split fail: L1 gate FAIL (reports/step06_base_model.md).
 - Two heads: preference (logistic) and objective q (ridge on log listeners). `models/base_model_v2.json` is read-only with a SHA-256 (`load_base()` refuses a changed file); `models/base_model_v2.bin` / `.h` are the 1,477-byte ESP32 versions (RAM limit: hard cap 520 KB, budget 32 KB). `models/` is git-ignored.
 
+## Personal Layer on the Base (implemented, Step 7)
+
+- `python3 -m rl.personal_layer --user adi`: cross-validated comparison (popularity / base-only / bandit / logistic from scratch / fine-tuned), learning curve, and saves `data/profiles/<user>_personal_v2.json`. `PersonalLayer(base)` with no data equals the base exactly; `load_personal(path, base)` refuses a layer made on a different base (hash). Design and marks: `reports/step07_preregistration.md`.
+- Result: fine-tuned +0.021 over base-only (mark +0.05), -0.008 vs logistic from scratch, popularity-only still best (0.712 vs 0.686): Layer 2 gate FAIL (reports/step07_personal_layer.md). Base 1,477 B + layer 437 B = 1,914 B (ESP32 budget 32 KB).
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
