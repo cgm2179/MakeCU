@@ -114,6 +114,7 @@ Music topics are never consumed by motion, and the reverse.
 ## Two-Question Ratings (implemented)
 
 - `python3 -m integration.orchestrator.run_rating_session --user adi` plays 30-second iTunes previews and asks QUALITY (1-5, "ignoring my taste, how well-made?") and PREFERENCE (1-5, "how much do I want to hear it?"). Songs are spread over mood x popularity band, one per artist, at most 6 per genre. Every 5th rated song is held out (30 of 150). `--retest` re-rates 20 songs at least 12 h later (Step 5).
+- `--hunt` (liked-song hunt): rates `--hunt-songs` (40) more songs, preference only, half picked by the bandit as likely-liked. Saved as `round` 3, `split` dev; not part of the 150, the gates or the held-out set. `python3 -m rl.ratings --user adi --export FILE --include-hunt` adds them to the labels.
 - File: `data/ratings/<user>.csv` (git-ignored): `user, song_id, quality, preference, split, round, time`. `rl/ratings.py` holds the checks (disagreement >= 15% by 2+ points, re-rating within 1 point on >= 80%) and `export_labels` (preference 4-5 = liked, 1-2 = disliked, 3 left out) for `rl.eval`.
 
 ## Module Interfaces (function names)

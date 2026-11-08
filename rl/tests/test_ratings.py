@@ -249,3 +249,39 @@ class TestReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHunt(unittest.TestCase):
+    def setUp(self):
+        self.cat = fake_catalog(60)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "a.csv"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_hunt_saves_round3_outside_the_150_and_gates(self):
+        rs.rate_session(self.cat, "a", self.path, None, scripted(["2", "2"] * 10), target=10, listen_seconds=0,
+                        say=lambda *x: None, wait_fn=lambda s: None)
+        n = rs.hunt_session(self.cat, "a", self.path, None, scripted(["5"] * 5), target=5, listen_seconds=0,
+                            say=lambda *x: None, wait_fn=lambda s: None)
+        # (songs already rated must not be offered again: hunt_session itself does not know, so use hunt_order)
+        rows = rt.load_rows(self.path, "a")
+        self.assertEqual(n, 5)
+        self.assertEqual(len(rt.first_pass(rows)), 10)
+        self.assertEqual(len(rt.hunt_rows(rows)), 5)
+        self.assertTrue(all(r["split"] == "dev" for r in rt.hunt_rows(rows)))
+        self.assertEqual(rt.analyse(rows)["n"], 10)
+
+    def test_hunt_order_skips_rated_and_puts_likely_liked_first(self):
+        by = {s.song_id: s for s in self.cat}
+        rows = [row(s.song_id, 3, 5 if s.mood == "upbeat" else 1) for s in self.cat[:20]]
+        order = rs.hunt_order(self.cat, rows, by, 0)
+        self.assertFalse({s.song_id for s in order} & {r["song_id"] for r in rows})
+        self.assertEqual(order[0].mood, "upbeat")
+
+    def test_export_can_include_hunt(self):
+        rows = [row("x", 3, 5), {**row("y", 3, 1), "round": rt.HUNT_ROUND}]
+        p = Path(self.tmp.name) / "l.csv"
+        self.assertEqual(rt.export_labels(rows, p, "a"), 1)
+        self.assertEqual(rt.export_labels(rows, p, "a", include_hunt=True), 2)

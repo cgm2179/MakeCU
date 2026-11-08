@@ -69,8 +69,9 @@ def ask(input_fn, prompt, keys="12345"):
         print("  Please type 1-5, or r (replay), s (skip), q (quit).")
 
 
-def _rate_one(song, player, input_fn, say, listen_seconds, wait_fn, blind):
-    """Play a song and collect (quality, preference). Returns (q, p) or 's' / 'q'."""
+def _rate_one(song, player, input_fn, say, listen_seconds, wait_fn, blind, pref_only=False):
+    """Play a song and collect (quality, preference). Returns (q, p) or 's' / 'q'.
+    With pref_only only the preference question is asked and quality is returned equal to it (hunt mode)."""
     if player is not None and not player.play(song):
         return "nopreview"
     say("\n" + ("(title hidden)" if blind else f"{song.title}  -  {song.artist}"))
@@ -79,6 +80,15 @@ def _rate_one(song, player, input_fn, say, listen_seconds, wait_fn, blind):
         wait_fn(listen_seconds)
     try:
         while True:
+            if pref_only:
+                say("  " + PREFERENCE_Q)
+                p = ask(input_fn, "  preference (1-5): ")
+                if p == "r":
+                    if player is not None:
+                        player.stop()
+                        player.play(song)
+                    continue
+                return p if p in ("s", "q") else (p, p)
             say("  " + QUALITY_Q)
             q = ask(input_fn, "  quality (1-5): ")
             if q == "r":
@@ -137,6 +147,60 @@ def rate_session(plan, user, csv_path, player=None, input_fn=input, target=rt.TA
     return rated
 
 
+def hunt_order(plan_pool, rows, by_id, seed=0):
+    """Unrated songs ordered so about half are ones the bandit expects you to like (trained on your preferences
+    so far) and half are random, alternating. Same idea as run_agreement_check.smart_order."""
+    from rl.eval import BanditModel
+    seen = {r["song_id"] for r in rows}
+    train = [(by_id[r["song_id"]], 1 if r["preference"] >= rt.LIKE_AT else 0) for r in rows
+             if r["song_id"] in by_id and (r["preference"] >= rt.LIKE_AT or r["preference"] <= rt.DISLIKE_AT)]
+    fresh = [x for x in plan_pool if x.song_id not in seen]
+    rest = list(fresh)
+    random.Random(seed).shuffle(rest)
+    if not any(y for _, y in train):
+        return rest
+    model = BanditModel(seed)
+    model.fit(train)
+    best = sorted(fresh, key=lambda x: -model.score(x))
+    out, used = [], set()
+    for a, b in zip(best, rest):
+        for x in (a, b):
+            if x.song_id not in used:
+                used.add(x.song_id)
+                out.append(x)
+    return out
+
+
+def hunt_session(songs, user, csv_path, player=None, input_fn=input, target=40, listen_seconds=15.0, say=print,
+                 wait_fn=time.sleep, blind=False, now=time.time):
+    """Liked-song hunt: rate `target` more songs (preference only). Saved as round 3, dev only, outside the 150."""
+    done = {r["song_id"] for r in rt.hunt_rows(rt.load_rows(csv_path, user))}
+    count = len(done)
+    rated = 0
+    for song in songs:
+        if count >= target:
+            break
+        if song.song_id in done:
+            continue
+        res = _rate_one(song, player, input_fn, say, listen_seconds, wait_fn, blind, pref_only=True)
+        if res == "nopreview":
+            continue
+        if res == "q":
+            say("Quit. Your progress is saved; run the same command to resume.")
+            break
+        if res == "s":
+            say("  skipped (not saved)")
+            continue
+        p = res[1]
+        count += 1
+        rated += 1
+        rt.append_row(csv_path, {"user": user, "song_id": song.song_id, "quality": p, "preference": p,
+                                 "split": "dev", "round": rt.HUNT_ROUND, "time": now()})
+        done.add(song.song_id)
+        say(f"  saved ({count}/{target})")
+    return rated
+
+
 def retest_set(rows, n=rt.RETEST_SONGS, seed=0):
     """The fixed set of songs to re-rate (same set every time for a given file)."""
     ids = sorted(r["song_id"] for r in rt.first_pass(rows))
@@ -186,6 +250,9 @@ def main(argv=None):
     ap.add_argument("--listen", type=float, default=15.0, help="seconds of listening before the questions appear")
     ap.add_argument("--clip-seconds", type=float, default=30.0)
     ap.add_argument("--retest", action="store_true", help="Step 5: re-rate 20 songs you already rated")
+    ap.add_argument("--hunt", action="store_true",
+                    help="liked-song hunt: rate more songs (preference only), half picked as likely-liked; extra data, not part of the 150")
+    ap.add_argument("--hunt-songs", type=int, default=40)
     ap.add_argument("--min-hours", type=float, default=12.0)
     ap.add_argument("--force", action="store_true", help="allow a re-rating sooner than --min-hours")
     ap.add_argument("--blind", action="store_true", help="hide titles and artists")
@@ -207,6 +274,16 @@ def main(argv=None):
             n = retest_session(a.user, path, {s.song_id: s for s in catalog}, player, listen_seconds=a.listen,
                                blind=a.blind, min_hours=a.min_hours, force=a.force, seed=a.seed)
             print(f"\nRe-rated {n} songs this run.")
+        elif a.hunt:
+            rows0 = rt.load_rows(path, a.user)
+            by_id = {s.song_id: s for s in catalog}
+            songs = hunt_order(catalog, [r for r in rows0], by_id, a.seed)
+            print(f"Hunting from {len(rt.first_pass(rows0))} earlier ratings "
+                  f"({sum(1 for r in rows0 if r['preference'] >= rt.LIKE_AT)} liked).")
+            n = hunt_session(songs, a.user, path, player, target=a.hunt_songs, listen_seconds=a.listen, blind=a.blind)
+            print(f"\nRated {n} hunt songs this run.")
+            print(f"Next: python3 -m rl.ratings --user {a.user} --export data/eval/{a.user}_pref_labels.csv --include-hunt")
+            return 0
         else:
             plan = build_plan(catalog, seed=a.seed)
             n = rate_session(plan, a.user, path, player, target=a.songs, listen_seconds=a.listen, blind=a.blind)

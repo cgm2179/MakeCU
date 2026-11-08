@@ -25,6 +25,7 @@ from pathlib import Path
 DEFAULT_DIR = Path(__file__).resolve().parents[1] / "data" / "ratings"
 FIELDS = ["user", "song_id", "quality", "preference", "split", "round", "time"]
 TARGET_SONGS = 150
+HUNT_ROUND = 3        # extra development-only ratings from the liked-song hunt (preference only; never held out)
 HELD_OUT = 30
 MIN_DISAGREE_SHARE = 0.15
 DISAGREE_POINTS = 2
@@ -70,6 +71,11 @@ def append_row(path, row):
 
 def first_pass(rows):
     return [r for r in rows if r["round"] == 1]
+
+
+def hunt_rows(rows):
+    """Extra ratings from the liked-song hunt (round 3). Not part of the 150 or the gates."""
+    return [r for r in rows if r["round"] == HUNT_ROUND]
 
 
 def retest_pairs(rows):
@@ -198,7 +204,7 @@ def overall(gates_):
     return "PASS" if all(v == "PASS" for v in vals) else "IN PROGRESS"
 
 
-def export_labels(rows, path, user, target="preference"):
+def export_labels(rows, path, user, target="preference", include_hunt=False):
     """Yes/no labels for rl.eval: preference >= 4 -> 1, <= 2 -> 0; 3s are left out as undecided.
     The split column carries the 30 held-out songs."""
     path = Path(path)
@@ -207,7 +213,7 @@ def export_labels(rows, path, user, target="preference"):
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["user", "song_id", "label", "split"])
-        for r in first_pass(rows):
+        for r in first_pass(rows) + (hunt_rows(rows) if include_hunt else []):
             v = r[target]
             if v >= LIKE_AT:
                 lab = 1
@@ -288,6 +294,7 @@ def main(argv=None):
     ap.add_argument("--user", default="adi")
     ap.add_argument("--file")
     ap.add_argument("--export", help="write yes/no labels for rl.eval to this CSV")
+    ap.add_argument("--include-hunt", action="store_true", help="with --export: also use liked-song hunt ratings")
     args = ap.parse_args(argv)
     path = args.file or ratings_path(args.user)
     rows = load_rows(path, args.user)
@@ -295,7 +302,7 @@ def main(argv=None):
         raise SystemExit(f"No ratings found in {path}.")
     print(format_text(analyse(rows)))
     if args.export:
-        print(f"Wrote {export_labels(rows, args.export, args.user)} labels to {args.export}")
+        print(f"Wrote {export_labels(rows, args.export, args.user, include_hunt=args.include_hunt)} labels to {args.export}")
     return 0
 
 
