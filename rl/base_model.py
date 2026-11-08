@@ -196,11 +196,17 @@ def popularity_auc(items):
 
 # ---------------------------------------------------------------- graph (plain SVG, no plotting library)
 
-def training_graph_svg(history, checkpoint_epochs, best_epoch, pop_val_auc=None, title="Base model training"):
+def training_graph_svg(history, checkpoint_epochs, best_epoch, pop_val_auc=None, title="Base model training", log_x=False):
     W, H, ml, mr, mt, mb = 920, 400, 60, 20, 78, 50
     pw = (W - ml - mr - 60) / 2
     ph = H - mt - mb
-    xs = [r["epoch"] for r in history]
+    if len(history) > 1500:      # draw about 1200 points, log-spaced so the early learning stays sharp
+        keep = {0, len(history) - 1}
+        for i in range(1200):
+            keep.add(min(len(history) - 1, int(round(10 ** (math.log10(len(history)) * i / 1199))) - 1))
+        history = [history[i] for i in sorted(keep) if 0 <= i < len(history)]
+    tx = (lambda e: math.log10(e + 1.0)) if log_x else (lambda e: float(e))
+    xs = [tx(r["epoch"]) for r in history]
     x0, x1 = min(xs), max(xs)
 
     def panel(ox, series, ylo, yhi, ylabel, hline=None):
@@ -214,19 +220,23 @@ def training_graph_svg(history, checkpoint_epochs, best_epoch, pop_val_auc=None,
             v = ylo + (yhi - ylo) * i / 4
             out.append(f'<line x1="{ox}" x2="{ox + pw}" y1="{Y(v):.1f}" y2="{Y(v):.1f}" stroke="#ddd"/>'
                        f'<text x="{ox - 6}" y="{Y(v) + 4:.1f}" font-size="11" text-anchor="end">{v:.2f}</text>')
-        for i in range(5):
-            v = x0 + (x1 - x0) * i / 4
-            out.append(f'<text x="{X(v):.1f}" y="{mt + ph + 16}" font-size="11" text-anchor="middle">{v:.0f}</text>')
-        out.append(f'<text x="{ox + pw / 2}" y="{H - 10}" font-size="12" text-anchor="middle">epoch</text>')
+        if log_x:
+            ticks = [(10 ** k - 1, f"{10 ** k - 1:g}") for k in range(0, int(x1) + 1)] + [(10 ** x1 - 1, f"{round(10 ** x1 - 1):,}")]
+            ticks = [(tx(e), lab) for e, lab in ticks]
+        else:
+            ticks = [(x0 + (x1 - x0) * i / 4, f"{x0 + (x1 - x0) * i / 4:.0f}") for i in range(5)]
+        for v, lab in ticks:
+            out.append(f'<text x="{X(v):.1f}" y="{mt + ph + 16}" font-size="11" text-anchor="middle">{lab}</text>')
+        out.append(f'<text x="{ox + pw / 2}" y="{H - 10}" font-size="12" text-anchor="middle">epoch{" (log scale)" if log_x else ""}</text>')
         out.append(f'<text x="{ox + pw / 2}" y="{mt - 10}" font-size="13" font-weight="bold" text-anchor="middle">{ylabel}</text>')
         for e in checkpoint_epochs:
-            out.append(f'<line x1="{X(e):.1f}" x2="{X(e):.1f}" y1="{mt + ph}" y2="{mt + ph - 8}" stroke="#555" stroke-width="2"/>')
-        out.append(f'<line x1="{X(best_epoch):.1f}" x2="{X(best_epoch):.1f}" y1="{mt}" y2="{mt + ph}" stroke="#2a9d3f" stroke-dasharray="4 3"/>')
+            out.append(f'<line x1="{X(tx(e)):.1f}" x2="{X(tx(e)):.1f}" y1="{mt + ph}" y2="{mt + ph - 8}" stroke="#555" stroke-width="2"/>')
+        out.append(f'<line x1="{X(tx(best_epoch)):.1f}" x2="{X(tx(best_epoch)):.1f}" y1="{mt}" y2="{mt + ph}" stroke="#2a9d3f" stroke-dasharray="4 3"/>')
         if hline is not None and ylo <= hline <= yhi:
             out.append(f'<line x1="{ox}" x2="{ox + pw}" y1="{Y(hline):.1f}" y2="{Y(hline):.1f}" stroke="#888" stroke-dasharray="6 4"/>'
                        f'<text x="{ox + pw - 4}" y="{Y(hline) - 5:.1f}" font-size="11" text-anchor="end" fill="#555">popularity-only</text>')
         for key, color, label in series:
-            pts = " ".join(f"{X(r['epoch']):.1f},{Y(min(max(r[key], ylo), yhi)):.1f}" for r in history)
+            pts = " ".join(f"{X(tx(r['epoch'])):.1f},{Y(min(max(r[key], ylo), yhi)):.1f}" for r in history)
             out.append(f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{pts}"/>')
         lx = ox + 8
         for i, (key, color, label) in enumerate(series):

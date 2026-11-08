@@ -131,6 +131,11 @@ Music topics are never consumed by motion, and the reverse.
 
 - `python3 -m rl.base_model --user adi` trains a logistic-regression taste model on the user's thumbs (agreement + live), saves checkpoints every 40 epochs to `models/checkpoints/`, the best one to `models/base_model_v1.json` (self-contained, SHA-256 of the weights, `load_model` refuses a changed file), plus `models/training_history.csv` and `models/training_curve.svg`. `models/` is git-ignored. Split 70/15/15; the test split is read once. It does not beat popularity-only (reports/step06b_base_model.md).
 
+## Base Model v2 on Last.fm (implemented, Step 6)
+
+- `python3 -m rl.base_lastfm` trains the base on other people's listening (Last.fm 1K in `data/external/lastfm1k/`, git-ignored, non-commercial licence). Definitions and pass marks are in `reports/step06_preregistration.md`; do not change them after seeing results. Result: beats popularity by +0.054 AUC on 126 held-out users (first 600-epoch run +0.025; test users read twice), match rate 4.9% (mark 30%) and quality-vs-preference split fail: L1 gate FAIL (reports/step06_base_model.md).
+- Two heads: preference (logistic) and objective q (ridge on log listeners). `models/base_model_v2.json` is read-only with a SHA-256 (`load_base()` refuses a changed file); `models/base_model_v2.bin` / `.h` are the 1,477-byte ESP32 versions (RAM limit: hard cap 520 KB, budget 32 KB). `models/` is git-ignored.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
