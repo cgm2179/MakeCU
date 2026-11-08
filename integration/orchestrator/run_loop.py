@@ -54,7 +54,7 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
         player=None, wait_for_playback=False, react=None, feedback=None,
-        listen_seconds=2.0, mainstream_bias=None, arms=None):
+        listen_seconds=2.0, mainstream_bias=None, arms=None, reward_model=None, thumb_fn=None):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
@@ -64,6 +64,9 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     mainstream_bias : 0..1 strength of the early lean toward well-known songs; None keeps the
                    agent's own setting (default shared.config.defaults.MAINSTREAM_BIAS). Applies
                    only when the pool came from the database path (pool.source == "database").
+    reward_model : optional rl.agent.reward.CameraRewardModel. Turns the raw camera reading into one reward
+                   from every signal available: thumb_fn(song) (+1 / -1 / None), a phone song change during
+                   the clip (behaviour) and the camera weighted by how reliable it has proved for this person.
     wait_for_playback : wait for each clip to finish before taking the reaction
     react        : callable(song_id) -> GroupReaction from the live camera
     feedback     : real reactions instead of a fake listener, e.g. CameraFeedback (starts its
@@ -186,6 +189,12 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             say(f"  simulated reaction: {'like' if reaction.group_liking > 0 else 'dislike'} "
                 f"(listener emotion: {dominant_emotion(reaction)})")
 
+        if reward_model is not None:
+            thumb = thumb_fn(song) if thumb_fn else None
+            reaction = reward_model(song, reaction, feedback, thumb, "replaced" if step in overrides else None)
+            reward, parts = reward_model.last
+            say("  combined reward: " + ("no signal" if reward is None else
+                f"{reward:+.2f} from " + ", ".join(f"{n} {s:+.1f} x{w:.2f}" for n, w, s in parts)))
         info = agent.update(song, reaction, ctx)
         if info.get("skipped"):
             skipped_rounds += 1
