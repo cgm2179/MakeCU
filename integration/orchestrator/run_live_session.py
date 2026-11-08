@@ -162,7 +162,7 @@ def main(argv=None):
     print(f"\nRated {n} songs this run; {len(rows)} saved in {path}\n")
     if rows:
         print(lt.format_text(lt.analyse(rows)))
-        print(f"\nNext: python3 -m rl.live_test --user {a.user}")
+        print(f"\nNext: python3 -m rl.live_test --user {a.user}" + (" --model fine-tuned" if a.model == "fine-tuned" else ""))
     return 0
 
 

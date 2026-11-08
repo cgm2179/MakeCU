@@ -156,6 +156,21 @@ class TestFineTunedCondition(unittest.TestCase):
             self.assertEqual(rls.seen_song_ids("nobody", root), set())
 
 
+class TestReportText(unittest.TestCase):
+    def test_report_describes_the_model_that_actually_ran(self):
+        rows = [{"user": "a", "seq": i, "condition": c, "song_id": str(i), "thumb": 1, "time": 0.0}
+                for i, c in enumerate(lt.CONDITIONS)]
+        tests = {"ran": 5, "failed": 0, "errors": 0, "skipped": 0}
+        ft = lt.build_live_report(rows, tests, "adi_v2", model="fine-tuned")
+        self.assertIn("frozen Last.fm base", ft)
+        self.assertIn("thumbed in the camera sessions", ft)
+        self.assertNotIn("saved profile", ft)
+        old = lt.build_live_report(rows, tests, "adi", model="profile")
+        self.assertIn("ratings-trained profile", old)
+        with self.assertRaises(KeyError):
+            lt.build_live_report(rows, tests, "x", model="nope")
+
+
 class TestAnalysis(unittest.TestCase):
     def rows(self, liked):
         out, i = [], 0
