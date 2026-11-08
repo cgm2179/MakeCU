@@ -184,9 +184,19 @@ python3 -m integration.orchestrator.run_camera_demo --songs 4 --taste --audio --
 
 Without `feedback=...` the loop uses the fake listener as before, so the simulation tests are unchanged.
 
+### Live camera, music, and Arduino emotion arms
+
+Flash `hardware/firmware/robot_combined/robot_combined.ino` to the ESP32 and close Arduino IDE's Serial Monitor. With the camera dependencies installed in the active Python environment, run from the repository root:
+
+```powershell
+python -m integration.orchestrator.run_camera_demo --real --camera 0 --detector yunet --mood gym --songs 4 --audio --clip-seconds 10 --arm-port COM5
+```
+
+Replace `COM5` with the ESP32 port shown in Device Manager and `0` with the webcam index if needed. The live preview overlays each face's detected emotion and liking, plus a rolling average labeled as enjoying, not enjoying, or neutral toward the current song genre. Press `q` or Esc in the preview to close its window; the demo continues. Omit `--arm-port` to run without an Arduino. Audio previews need internet and play through the computer's default output; songs without a matching preview are skipped.
+
 ## Live Camera → RL
 
-After applying `cv-rl-arms.patch` successfully from the repository root, start the live camera-to-song-picker loop from that same folder:
+Start the live camera-to-song-picker loop from the repository root:
 
 ```bash
 python -m integration.orchestrator.run_loop --live --camera 2 --detector yunet
