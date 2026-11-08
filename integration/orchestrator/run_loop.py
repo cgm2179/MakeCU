@@ -293,6 +293,9 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--user", default=None,
                         help="load this user's saved taste profile at the start and save it at the end")
+    parser.add_argument("--policy", choices=("bandit", "prior-learner"), default="bandit",
+                        help="bandit = the original learner (default). prior-learner = starts from the frozen base model and learns online "
+                             "(reports/step08c_*); simulated or keyboard sessions only, since the camera reward is not validated")
     parser.add_argument("--live", action="store_true",
                         help="read faces from the camera instead of the keyboard")
     parser.add_argument("--camera", type=int, default=2, help="DroidCam index (default 2)")
@@ -302,6 +305,16 @@ if __name__ == "__main__":
     parser.add_argument("--arm-port", default=None,
                         help="Arduino serial port, e.g. COM3. Omit to only print arm lines.")
     args = parser.parse_args()
+    agent = None
+    if args.policy == "prior-learner":
+        if args.live:
+            parser.error("--policy prior-learner cannot use --live: the camera reward has not passed its validation (reports/step03d, step03e)")
+        if args.user:
+            parser.error("--policy prior-learner does not save profiles yet; leave out --user")
+        from rl import base_lastfm as bl
+        from rl.agent.prior_agent import PriorLearnerAgent
+        from rl.agent.prior_learner import PriorLearner
+        agent = PriorLearnerAgent(PriorLearner(bl.load_base(bl.MODEL_DIR / "base_model_v2.json"), "popularity", seed=args.seed))
     react = None
     if args.live:
         from perception.bridge import LiveCamera, start_camera
@@ -309,6 +322,6 @@ if __name__ == "__main__":
         react = LiveCamera(start_camera(args.camera, args.detector), sample_s=args.sample)
         print(f"Demo mode: each song plays ~{DEMO_SONG_SECONDS}s then we announce the next track.")
         print(f"  (change DEMO_SONG_SECONDS in shared/config/defaults.py to speed up or slow down)")
-    run(args.simulate, args.event, args.seed, react=react,
+    run(args.simulate, args.event, args.seed, react=react, agent=agent,
         arms=EmotionArms(ArmLink(args.arm_port)),
         listen_seconds=DEMO_SONG_SECONDS, user=args.user)

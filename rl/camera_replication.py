@@ -36,9 +36,9 @@ def matrix(rows, keys=DYNAMICS):
     return np.array([[r["features"][k] for k in keys] for r in rows], dtype=float)
 
 
-def fit_model(train_rows):
+def fit_model(train_rows, keys=DYNAMICS):
     """Standardise on the training songs and fit the penalised logistic model. Returns (weights incl. bias, mean, sd)."""
-    X = matrix(train_rows)
+    X = matrix(train_rows, keys)
     y = np.array([float(r["thumb"]) for r in train_rows])
     mean, sd = X.mean(axis=0), X.std(axis=0)
     sd[sd == 0] = 1.0
@@ -46,9 +46,9 @@ def fit_model(train_rows):
     return fit_logistic(Z, y, np.zeros(len(X)), LAM), mean, sd
 
 
-def score_rows(model, rows):
+def score_rows(model, rows, keys=DYNAMICS):
     w, mean, sd = model
-    Z = np.hstack([(matrix(rows) - mean) / sd, np.ones((len(rows), 1))])
+    Z = np.hstack([(matrix(rows, keys) - mean) / sd, np.ones((len(rows), 1))])
     return Z @ w
 
 

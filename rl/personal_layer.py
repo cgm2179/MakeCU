@@ -48,23 +48,25 @@ def fast_auc(scores, y):
     return float((r[pos].sum() - p * (p + 1) / 2) / (p * n))
 
 
-def fit_logistic(X, y, offset, lam, iters=60):
-    """Newton's method (IRLS) for L2-penalised logistic regression with an offset.
-    X's LAST column is the bias (all ones) and is not penalised. Deterministic."""
+def fit_logistic(X, y, offset, lam, iters=60, sample_weight=None):
+    """Newton's method (IRLS) for L2-penalised logistic regression with an offset and optional sample weights (soft labels allowed).
+    X's LAST column is the bias (all ones) and is not penalised. Deterministic. With no weights this is the original Step 7 fit."""
     n, d = X.shape
+    sw = np.ones(n) if sample_weight is None else np.asarray(sample_weight, dtype=float)
+    tot = float(sw.sum())
     pen = np.full(d, float(lam))
     pen[-1] = 0.0
     w = np.zeros(d)
 
     def loss(w_):
         z = offset + X @ w_
-        return float(np.mean(np.logaddexp(0, z) - y * z) + 0.5 * np.sum(pen * w_ * w_))
+        return float(np.sum(sw * (np.logaddexp(0, z) - y * z)) / tot + 0.5 * np.sum(pen * w_ * w_))
     cur = loss(w)
     for _ in range(iters):
         p = sigmoid(offset + X @ w)
-        g = X.T @ (p - y) / n + pen * w
-        W = np.maximum(p * (1 - p), 1e-6)
-        H = (X.T * W) @ X / n + np.diag(pen) + 1e-9 * np.eye(d)
+        g = X.T @ (sw * (p - y)) / tot + pen * w
+        W = np.maximum(p * (1 - p), 1e-6) * sw
+        H = (X.T * W) @ X / tot + np.diag(pen) + 1e-9 * np.eye(d)
         step = np.linalg.solve(H, g)
         t = 1.0
         while t > 1e-4 and loss(w - t * step) > cur + 1e-12:
