@@ -24,6 +24,23 @@ Then run from the `perception` directory:
 
 (`2` is the DroidCam virtual-camera index on this setup; try `0` or `1` if needed.)
 
+### Tune or disable detected emotions
+Edit `perception_cv/emotion/tuning.py`:
+
+- Add or remove raw emotion names in `ENABLED_RAW_EMOTIONS`. Only happy, sad, and
+  neutral are enabled by default; the other DeepFace classes are commented out.
+- Set `MIN_PROBABILITY` values from `0.0` to `1.0` to ignore weak scores for each
+  enabled emotion. For example, `"happy": 0.6` requires a happy score of at least
+  60 percent. Kept scores are renormalized; if none pass, that face is omitted.
+- Restart the program after editing. This is a probability filter, not model
+  retraining, so it cannot make DeepFace intrinsically more accurate.
+
+“Bored” is derived from a still face rather than detected by DeepFace. Disable it
+with `ENABLE_BORED = False` in `perception_cv/config.py`.
+
+Arm motion profiles are tuned separately in `motion/control/arm_params.py`.
+Change `HAPPY`, `SAD`, and `NEUTRAL` there to adjust period, amplitude, and phase.
+
 Other useful variants:
 
     python -m perception_cv --camera 2 --mock              # test camera without loading DeepFace

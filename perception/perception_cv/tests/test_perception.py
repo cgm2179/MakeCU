@@ -10,6 +10,7 @@ from perception_cv.capture import local_camera
 from perception_cv.config import PerceptionConfig
 from perception_cv.emotion.base import Face
 from perception_cv.emotion.mock_model import MockModel
+from perception_cv.emotion import tuning
 from perception_cv.group.scoring import aggregate
 from perception_cv.pipeline import PerceptionService
 from perception_cv.types import PersonReaction
@@ -48,6 +49,27 @@ def test_happy_is_positive():
 def test_angry_is_negative():
     r = run(FixedModel(angry=0.7, disgust=0.3))
     assert r.group_liking < -0.9 and r.people[0].emotion == "angry"
+
+
+def test_emotion_tuning_disables_classes_and_renormalizes(monkeypatch):
+    monkeypatch.setattr(tuning, "ENABLED_RAW_EMOTIONS", {"happy", "sad", "neutral"})
+    monkeypatch.setattr(tuning, "MIN_PROBABILITY", {"happy": 0.5, "sad": 0.0, "neutral": 0.0})
+
+    probs = tuning.tune_probabilities({
+        "happy": 0.4,
+        "sad": 0.3,
+        "neutral": 0.3,
+        "angry": 1.0,
+    })
+
+    assert probs == {"sad": 0.5, "neutral": 0.5}
+
+
+def test_emotion_tuning_omits_face_when_no_emotion_passes(monkeypatch):
+    monkeypatch.setattr(tuning, "ENABLED_RAW_EMOTIONS", {"happy", "sad", "neutral"})
+    monkeypatch.setattr(tuning, "MIN_PROBABILITY", {"happy": 0.8, "sad": 0.8, "neutral": 0.8})
+
+    assert tuning.tune_probabilities({"happy": 0.4, "sad": 0.3, "neutral": 0.3}) == {}
 
 
 def test_confidence_ramps_with_track_age():

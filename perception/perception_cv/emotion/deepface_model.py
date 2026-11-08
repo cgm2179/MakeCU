@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy as np
 from .base import Face
+from .tuning import tune_probabilities
 
 
 class DeepFaceModel:
@@ -41,9 +42,9 @@ class DeepFaceModel:
             reg = r["region"]
             if min(reg["w"], reg["h"]) < self.min_face_px:
                 continue
-            probs = {k: float(v) for k, v in r["emotion"].items()}
-            total = sum(probs.values()) or 1.0
-            probs = {k: v / total for k, v in probs.items()}
+            probs = tune_probabilities({k: float(v) / 100.0 for k, v in r["emotion"].items()})
+            if not probs:
+                continue
             fc = r.get("face_confidence") or 0.8   # some detector backends report 0
             faces.append(Face((reg["x"], reg["y"], reg["w"], reg["h"]), probs, min(float(fc), 1.0)))
         return faces
