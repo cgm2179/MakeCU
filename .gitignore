@@ -11,3 +11,4 @@ data/agreement/
 .venv/
 models/
 data/external/
+data/live/
