@@ -146,6 +146,11 @@ Music topics are never consumed by motion, and the reverse.
 
 - Fresh quiet-room session: `run_agreement_check --user adi_rep --songs 60 --setting quiet --moods gym,party,chill,happy,sad,study --exclude-seen adi --rank-with adi --seed 7` (`--exclude-seen` skips every song already rated or thumbed; `--rank-with` alternates the fine-tuned model's top picks with random ones so both thumbs occur). Then `python3 -m rl.camera_replication --train adi --new adi_rep` applies the rule fixed in `reports/step03d_preregistration.md` (>= 40 songs, >= 12 of each thumb, AUC >= 0.70, gain >= +0.05 over the old reading) and writes `reports/step03d_camera_replication.md`.
 
+## Camera v2 and Policy (implemented, Steps 3e and 8c)
+
+- Engagement features (`perception/emotion/clip_features.py`, `ENGAGEMENT_FEATURES`): activity, stillness, beat-locked head movement (from the song's tempo), lean, smile fraction and peak, measured against a per-song **pre-roll** (`CameraFeedback.begin_preroll()`, `run_agreement_check --preroll 4`). Raw samples are saved per clip to `data/camera_raw/<user>/` (git-ignored; no images) and `clip_features.features_from_raw()` recomputes features from them. Pre-registered cross-session test: `reports/step03e_preregistration.md`, `python3 -m rl.camera_validation --sessions A B` (pass: AUC >= 0.65 on every held-out session). Not yet run: needs two new sessions.
+- Policy: `rl/agent/prior_learner.py` (+ `prior_agent.py` adapter, `run_loop --policy prior-learner`, offline `python3 -m rl.replay`). Camera feedback is ignored unless `camera_validated=True`. Results: `reports/step08c_policy_replay.md`.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |

@@ -23,7 +23,8 @@ from rl import agreement as ag
 from rl.agent.bandit import mean_confidence
 from rl.agent.context import dominant_emotion
 
-DEFAULT_DIR = Path(__file__).resolve().parents[2] / "data" / "agreement"
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DIR = ROOT / "data" / "agreement"
 MOODS = ("gym", "party")
 
 
@@ -77,8 +78,15 @@ def read_count(input_fn, prompt, n):
         print(f"  Please type a number from 0 to {n}, or s or q.")
 
 
+def save_raw(raw_dir, song_id, thumb, raw):
+    """One JSON per clip with the raw face samples (no images), so features can be recomputed later without a new session."""
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / f"{song_id}.json").write_text(json.dumps({"song_id": song_id, "thumb": thumb, **raw}))
+
+
 def collect(feedback, songs, user, out_csv, target=40, player=None, listen_seconds=10.0,
-            input_fn=input, say=print, setting="quiet", group_size=1):
+            input_fn=input, say=print, setting="quiet", group_size=1, preroll=0.0, raw_dir=None):
     """Play each song, read the camera, ask for the thumb. Returns the number of songs rated this run."""
     done = rated_ids(out_csv, user)
     have = len(done)
@@ -88,6 +96,10 @@ def collect(feedback, songs, user, out_csv, target=40, player=None, listen_secon
             break
         if song.song_id in done:
             continue
+        if preroll > 0 and hasattr(feedback, "begin_preroll"):
+            say("\n  ...relax, look ahead, hands off the keyboard: the song starts in a moment")
+            feedback.begin_preroll()
+            time.sleep(preroll)
         if player is not None and not player.play(song):
             continue  # no preview for this song; try another
         say(f"\n[{have + rated + 1}/{target}] {song.title} - {song.artist}")
@@ -100,6 +112,7 @@ def collect(feedback, songs, user, out_csv, target=40, player=None, listen_secon
         conf = mean_confidence(reaction)
         liking = reaction.group_liking if reaction.people else None
         feats = feedback.clip_features() if hasattr(feedback, "clip_features") else None
+        raw = feedback.clip_raw() if raw_dir and hasattr(feedback, "clip_raw") else None
         likes = ""
         if group_size > 1:
             likes = read_count(input_fn, f"  How many of the {group_size} people liked it?  0-{group_size}, s = skip song, q = quit: ", group_size)
@@ -118,6 +131,8 @@ def collect(feedback, songs, user, out_csv, target=40, player=None, listen_secon
                              "confidence": round(conf, 4), "emotion": dominant_emotion(reaction), "time": time.time(),
                              "features": json.dumps({k: round(v, 5) for k, v in feats.items()}) if feats else "",
                              "setting": setting, "group_size": group_size, "likes": likes})
+        if raw is not None:
+            save_raw(raw_dir, song.song_id, thumb, raw)
         rated += 1
         cam = "no face seen" if liking is None else f"camera {liking:+.2f}"
         say(f"  saved: thumb {'UP' if thumb else 'DOWN'}, {cam}")
@@ -205,6 +220,10 @@ def main(argv=None):
                     help="skip every song SUBJECT has already rated or thumbed (ratings, camera sessions, live sessions)")
     ap.add_argument("--rank-with", metavar="SUBJECT", default=None,
                     help="order songs to alternate SUBJECT's fine-tuned model's top picks with random ones (gets both thumbs)")
+    ap.add_argument("--preroll", type=float, default=0.0,
+                    help="seconds of relaxed face recorded before each song (its baseline); 4 is recommended. 0 = use the session calibration only")
+    ap.add_argument("--raw-dir", default=None,
+                    help="save the raw face samples of every clip here (default data/camera_raw/<user> when --preroll is on)")
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--demo", action="store_true", help="scripted fake face and thumbs, no camera or audio (writes to a demo file)")
     ap.add_argument("--seed", type=int, default=0)
@@ -271,8 +290,10 @@ def main(argv=None):
     try:
         if not a.demo and a.calibrate_seconds > 0:
             feedback.calibrate(say=print)
+        raw_dir = a.raw_dir or (str(ROOT / "data" / "camera_raw" / user) if a.preroll > 0 and not a.demo else None)
         n = collect(feedback, songs, user, out_csv, target=a.songs, player=player,
-                    listen_seconds=listen, input_fn=input_fn, setting=a.setting, group_size=a.group_size)
+                    listen_seconds=listen, input_fn=input_fn, setting=a.setting, group_size=a.group_size,
+                    preroll=0.0 if a.demo else a.preroll, raw_dir=raw_dir)
     finally:
         if player:
             player.close()
