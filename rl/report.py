@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "reports"
 TEST_MODULES = [
     "rl.tests.test_bandit", "rl.tests.test_eval", "rl.tests.test_profile", "rl.tests.test_report",
-    "rl.tests.test_agreement", "rl.tests.test_signals", "rl.tests.test_ratings", "rl.tests.test_personalize", "rl.tests.test_live", "integration.tests.test_cv_to_rl", "motion.tests.test_arms",
+    "rl.tests.test_agreement", "rl.tests.test_signals", "rl.tests.test_ratings", "rl.tests.test_personalize", "rl.tests.test_live", "rl.tests.test_blend", "integration.tests.test_cv_to_rl", "motion.tests.test_arms",
     "music.tests.test_playlist", "music.tests.test_dataset_pipeline", "music.tests.test_audio",
     "music.tests.test_mainstream_bias", "music.tests.test_gemini_lookup",
     "integration.tests.test_core_loop", "integration.tests.test_camera_loop",
