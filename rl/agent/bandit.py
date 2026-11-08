@@ -14,6 +14,10 @@ learns a weight per feature, at three levels so it can both generalise and speci
 A song's predicted reward is the sum of its feature weights over all three levels.
 Because the weights belong to features, not songs, the agent can score songs it has
 never played (e.g. a new jazz song after liking other jazz songs).
+
+Tried and not kept (measured with rl.eval, 12 seeds, 150 labels): a shared per-person "leniency"
+offset (stingy vs generous listeners, 10% to 80% liked). AUC moved by -0.009 to -0.002, p@10 by
+-0.02 to -0.01: no gain, since a constant cannot change which song ranks higher.
 """
 from __future__ import annotations
 

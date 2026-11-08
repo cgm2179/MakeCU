@@ -19,6 +19,8 @@ import threading
 import time
 from pathlib import Path
 
+from perception.emotion import clip_features
+
 PERCEPTION_DIR = Path(__file__).resolve().parents[1]  # <repo>/perception
 
 
@@ -140,8 +142,14 @@ class CameraFeedback:
         self.baseline_std = 0.0
         self.last_calibration: dict | None = None
         self._samples = collections.deque(maxlen=3000)  # (time, raw group_liking, dominant emotion)
+        self._probs = collections.deque(maxlen=3000)    # (time, mean happy prob, mean surprised prob)
+        self._motion = collections.deque(maxlen=20000)  # (time, person_id, cx, cy, w, h) per analysed frame
+        self.rest: dict = {}                            # resting smile/movement measured at calibration
         self._sampler = None
         self._clip_start = time.time()
+        self._preroll_start: float | None = None        # set by begin_preroll(); the relaxed seconds before a song
+        self._preroll: tuple | None = None              # (start, end) of the pre-roll of the current clip, if it was long enough
+        self._tempo: float | None = None                # the playing song's tempo in BPM, for beat-locked movement
 
     def start(self) -> None:
         if self.server is not None:  # already started
@@ -184,8 +192,24 @@ class CameraFeedback:
             r = self._pcv.get_group_reaction("sample")
             conf = [p.confidence for p in r.people]
             if conf and sum(conf) / len(conf) >= MIN_SAMPLE_CONFIDENCE:
-                self._samples.append((time.time(), r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
+                now = time.time()
+                self._samples.append((now, r.group_liking, max(r.group_emotion, key=r.group_emotion.get)))
+                hp = self._mean_probs()
+                if hp is not None:
+                    self._probs.append((now, *hp))
             time.sleep(0.1)
+
+    def _mean_probs(self):
+        """Mean (happy, surprised) probability over the faces currently tracked, or None."""
+        svc = self.service
+        if svc is None or not hasattr(svc, "_phones"):
+            return None
+        with svc._lock:
+            tracks = [t for ph in svc._phones.values() for t in ph.tracker.tracks.values()]
+        if not tracks:
+            return None
+        return (sum(t.probs.get("happy", 0.0) for t in tracks) / len(tracks),
+                sum(t.probs.get("surprised", 0.0) for t in tracks) / len(tracks))
 
     def calibrate(self, seconds: float | None = None, say=print, discard: float = 2.0,
                   countdown: int = 3, count_step: float = 1.0, max_attempts: int = 3,
@@ -221,6 +245,8 @@ class CameraFeedback:
                 problems = check_baseline(baseline, spread, max_baseline, max_spread)
                 if not problems:
                     self.baseline, self.baseline_std = baseline, spread
+                    self.rest = clip_features.resting_baseline(list(self._probs), list(self._motion),
+                                                               start + discard, start + seconds)
                     say(f"Baseline resting liking = {baseline:+.2f}  (spread {spread:.2f}, {len(vals)} samples) - accepted")
                     speak_fn("thanks")
                     return baseline
@@ -293,6 +319,10 @@ class CameraFeedback:
         self._ms += (time.time() - t0) * 1000
         self._frames += 1
         self.last_faces = len(reply.get("faces", []))
+        now = time.time()
+        for f in reply.get("faces", []):
+            x, y, w, h = f["box"]
+            self._motion.append((now, f["person_id"], x + w / 2, y + h / 2, w, h))
         return reply
 
     def _read_webcam(self) -> None:
@@ -376,12 +406,42 @@ class CameraFeedback:
                 self.feeder_error = err
             time.sleep(1.0 / self.feed_fps)
 
+    PREROLL_MIN_S = 2.0      # a pre-roll shorter than this is not trusted; the session calibration is used instead
+
+    def begin_preroll(self) -> None:
+        """Mark the start of the relaxed seconds before a song. The person is asked to sit comfortably and not touch anything;
+        what the face and head do now is that person's baseline for the next clip, so slow drift in light, distance or posture cancels."""
+        self._preroll_start = time.time()
+
+    def clip_baseline(self) -> dict:
+        """Baseline for the current clip: its own pre-roll if there was one, filled in from the session calibration otherwise."""
+        return clip_features.baseline_from_preroll(list(self._probs), list(self._motion), self._preroll, self.rest)
+
+    def clip_features(self) -> dict | None:
+        """Features of the clip so far: reaction dynamics plus head/face movement, relative to the pre-roll (or calibration) baseline."""
+        lik = [(t, self._cal(v)) for t, v, _ in list(self._samples) if t >= self._clip_start]
+        return clip_features.clip_features(lik, list(self._probs), list(self._motion), self._clip_start, time.time(),
+                                           self.clip_baseline(), tempo_bpm=self._tempo)
+
+    def clip_raw(self) -> dict:
+        """The raw samples of the current clip and its pre-roll (no images): enough to recompute any feature later without a new session."""
+        t0 = self._preroll[0] if self._preroll else self._clip_start
+        return {"t0": t0, "clip_start": self._clip_start, "t1": time.time(), "preroll": list(self._preroll) if self._preroll else None,
+                "tempo": self._tempo, "rest": self.rest, "baseline": self.baseline,
+                "liking": [(t, self._cal(v)) for t, v, _ in list(self._samples) if t >= t0],
+                "probs": [list(x) for x in list(self._probs) if x[0] >= t0],
+                "motion": [list(x) for x in list(self._motion) if x[0] >= t0]}
+
     def begin_song(self, song) -> None:
         """Called when a song starts (lets a taste-aware mock model know what is playing)."""
         self._round += 1
         self._clip_start = time.time()
-        self.current_genre = song.genre or "music"
+        self.current_genre = getattr(song, "genre", None) or "music"
         self._display_samples.clear()
+        ps, self._preroll_start = self._preroll_start, None
+        self._preroll = (ps, self._clip_start) if ps is not None and self._clip_start - ps >= self.PREROLL_MIN_S else None
+        feats = getattr(song, "audio_features", None) or {}
+        self._tempo = feats.get("tempo")
         if hasattr(self.model, "set_song"):
             self.model.set_song(song, present=self._round not in self.empty_rounds)
 

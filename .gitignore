@@ -4,3 +4,12 @@ __pycache__/
 data/spotify/*.csv
 data/gemini_cache.json
 .env
+data/profiles/
+data/eval/
+data/ratings/
+data/agreement/
+.venv/
+models/
+data/external/
+data/live/
+data/camera_raw/

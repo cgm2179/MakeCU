@@ -55,7 +55,7 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
         player=None, wait_for_playback=False, react=None, feedback=None,
-        listen_seconds=2.0, mainstream_bias=None, arms=None, reward_model=None, thumb_fn=None):
+        listen_seconds=2.0, mainstream_bias=None, arms=None, reward_model=None, thumb_fn=None, user=None, profile_dir=None):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
@@ -79,6 +79,15 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     bus = Bus()
     flt = Filter(sources=(FilterSource("event", event),))
     pool = pool if pool is not None else get_candidates(flt)
+    if agent is None and user:
+        from rl.agent import profile as _profile
+        try:
+            agent = _profile.load_profile(user, directory=profile_dir, seed=seed)
+            say(f"Loaded saved profile for '{user}' ({agent.n_updates} earlier updates).")
+        except _profile.ProfileError as e:
+            if "no saved profile" not in str(e):
+                raise                       # a damaged or mismatched profile is never silently replaced
+            say(f"No saved profile for '{user}' yet: starting fresh.")
     agent = agent or BanditAgent(seed=seed)
     controller = PlaylistController(pool, bus, player)
     if mainstream_bias is not None:
@@ -108,14 +117,15 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     if arms is None:
         arms = EmotionArms()
 
-    emotion, step, last_id, forced = "neutral", 0, None, None
+    emotion, step, last_id, forced, forced_from_phone = "neutral", 0, None, None, False
     unavailable: set = set()  # songs the audio output could not play
     log, rewards, skipped_rounds = [], [], 0
     while simulate_rounds is None or step < simulate_rounds:
         step += 1
         ctx = Context(filter_key(flt), emotion)
         if forced is not None:  # pre-queued (demo next-up) or phone manual override
-            song, mode, forced = forced, ("phone" if getattr(forced, "_from_phone", False) else "queued"), None
+            song, mode, forced = forced, ("phone" if forced_from_phone else "queued"), None
+            forced_from_phone = False
         else:
             playable = [x for x in pool if x.song_id not in unavailable] or pool
             song, mode = agent.choose_next_song(playable, last_id, ctx, recent_ids=controller.history[-4:])
@@ -243,13 +253,12 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         manual = controller.take_manual_change()  # song boundary: apply phone change
         if manual:
             agent.record_manual_override(manual, song, ctx)
-            manual._from_phone = True  # type: ignore[attr-defined]
-            forced = manual
+            forced, forced_from_phone = manual, True    # Song is frozen: keep the flag beside it, not on it
             say(f"  manual override recorded: +signal for {manual.title}, "
                 f"-signal for {song.title}; {manual.title} plays next")
         else:
             # Make the announced next song actually the one that plays (no surprise re-roll).
-            forced = next_song
+            forced, forced_from_phone = next_song, False
         log.append({"step": step, "song_id": song.song_id, "mode": mode, "emotion": ctx.emotion,
                     "song": song, "reward": info["reward"], "skipped": bool(info.get("skipped")),
                     "reaction": reaction})
@@ -267,7 +276,12 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         say(f"  when {emo:<7}: " + "; ".join(f"{s.title} ({s.genre}, {p:+.2f})" for s, p in recs))
     say(f"\nMotion stub: {len(motion.tick_times)} ticks, {motion.restarts} restarts, "
         f"longest gap {motion.longest_gap() * 1000:.0f} ms (music events did not interrupt it)")
-    return {"agent": agent, "controller": controller, "motion": motion, "arms": arms,
+    saved = None
+    if user:
+        from rl.agent import profile as _profile
+        saved = _profile.save_profile(agent, user, directory=profile_dir)
+        say(f"Saved profile for '{user}' to {saved}")
+    return {"agent": agent, "controller": controller, "motion": motion, "arms": arms, "profile_path": saved,
             "log": log, "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt),
             "skipped_rounds": skipped_rounds}
 
@@ -277,6 +291,11 @@ if __name__ == "__main__":
     parser.add_argument("--simulate", type=int, metavar="N", help="run N rounds with a simulated listener")
     parser.add_argument("--event", default="party", help="first filter, e.g. party, study")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--user", default=None,
+                        help="load this user's saved taste profile at the start and save it at the end")
+    parser.add_argument("--policy", choices=("bandit", "prior-learner"), default="bandit",
+                        help="bandit = the original learner (default). prior-learner = starts from the frozen base model and learns online "
+                             "(reports/step08c_*); simulated or keyboard sessions only, since the camera reward is not validated")
     parser.add_argument("--live", action="store_true",
                         help="read faces from the camera instead of the keyboard")
     parser.add_argument("--camera", type=int, default=2, help="DroidCam index (default 2)")
@@ -286,6 +305,16 @@ if __name__ == "__main__":
     parser.add_argument("--arm-port", default=None,
                         help="Arduino serial port, e.g. COM3. Omit to only print arm lines.")
     args = parser.parse_args()
+    agent = None
+    if args.policy == "prior-learner":
+        if args.live:
+            parser.error("--policy prior-learner cannot use --live: the camera reward has not passed its validation (reports/step03d, step03e)")
+        if args.user:
+            parser.error("--policy prior-learner does not save profiles yet; leave out --user")
+        from rl import base_lastfm as bl
+        from rl.agent.prior_agent import PriorLearnerAgent
+        from rl.agent.prior_learner import PriorLearner
+        agent = PriorLearnerAgent(PriorLearner(bl.load_base(bl.MODEL_DIR / "base_model_v2.json"), "popularity", seed=args.seed))
     react = None
     if args.live:
         from perception.bridge import LiveCamera, start_camera
@@ -293,6 +322,6 @@ if __name__ == "__main__":
         react = LiveCamera(start_camera(args.camera, args.detector), sample_s=args.sample)
         print(f"Demo mode: each song plays ~{DEMO_SONG_SECONDS}s then we announce the next track.")
         print(f"  (change DEMO_SONG_SECONDS in shared/config/defaults.py to speed up or slow down)")
-    run(args.simulate, args.event, args.seed, react=react,
+    run(args.simulate, args.event, args.seed, react=react, agent=agent,
         arms=EmotionArms(ArmLink(args.arm_port)),
-        listen_seconds=DEMO_SONG_SECONDS)
+        listen_seconds=DEMO_SONG_SECONDS, user=args.user)

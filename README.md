@@ -1,8 +1,22 @@
-# MakeCU: A Speaker That Learns Your Taste
+# DJ Bot: A Speaker That Learns Your Taste
+
+*DJ Bot: music that listens back.* (The repository is named MakeCU, after the hackathon.)
 
 Built for **MakeCU**, Columbia University Robotics Club's 24-hour hardware hackathon.
 
 A robot that learns what music you (or your group) like by watching how people react, and that physically moves with them while it plays. It picks a song, reads reactions with two cameras, and uses reinforcement learning to choose better songs over time.
+
+## Try It in 30 Seconds (no robot needed)
+
+You only need Python 3.9 or newer; the simulated session uses no extra packages and no camera.
+
+```
+git clone https://github.com/cgm2179/MakeCU.git
+cd MakeCU
+python3 -m integration.orchestrator.run_loop --simulate 25
+```
+
+You will see DJ Bot pick a song, read a simulated listener's reaction, learn from it, choose the next song, and print the arm movements it would make for the emotion it saw. A phone changing the song mid-session is simulated too, and it never interrupts the movement. Without the song dataset it uses a built-in list of well-known songs. To run with the real camera, audio and arms, see the camera demo sections below.
 
 ## How It Works
 
@@ -52,6 +66,10 @@ Perception feeds both systems: group reactions go to the RL agent, and user pose
 - Two cameras
 - Motors/actuators and a chassis for movement
 - Compute board (to be decided)
+
+## Results and Evaluation
+
+How well does DJ Bot work? Every pass mark was written down before the data was collected, and the results include both what worked and what did not yet. Start with the [one-page summary](reports/step10_writeup.md); the [full write-up](reports/step10_writeup_full.md) has every number and the pre-registrations are in `reports/`.
 
 ## Team Ownership
 

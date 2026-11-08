@@ -54,7 +54,7 @@ def main():
     genres = Counter(s.genre for s in pool)
     print(f"Dataset: {len(allsongs):,} unique tracks loaded from CSV")
     print(f"First filter: event='{a.mood}' -> target { {k: v[0] for k, v in profile.items()} }")
-    print(f"Pool: {len(pool)} best songs for the mood, well-known ones first (mainstream bias {a.mainstream_bias if a.mainstream_bias is not None else "default"})")
+    print(f"Pool: {len(pool)} best songs for the mood, well-known ones first (mainstream bias {a.mainstream_bias if a.mainstream_bias is not None else 'default'})")
     print(f"  pool means   : {means(pool)}")
     print(f"  dataset means: {means(allsongs)}")
     print(f"  top genres in pool: {genres.most_common(8)}")
