@@ -7,32 +7,39 @@ L3.2 live-session gate (`step08_preregistration.md`): personal >= popularity + 1
 personal >= random + 25 points, 40+ songs per condition, "personal" here being the frozen base model's
 preference head instead of a trained profile, since Cameron has no ratings.
 
-    python3 -m integration.orchestrator.run_new_user_check --user cameron
+    python3 -m integration.orchestrator.run_new_user_check --user cameron --per-condition 40
 
-## Result (45 songs so far, 15 per condition; gate wants 40+ per condition)
+## Result (120 songs, 40 per condition — the full pre-registered size)
 | condition | liked | share | 95% interval |
 |---|---|---|---|
-| random | 3/15 | 20% | 7% to 45% |
-| popularity | 7/15 | 47% | 25% to 70% |
-| personal (base model) | 4/15 | 27% | 11% to 52% |
+| random | 10/40 | 25% | 14% to 40% |
+| popularity | 19/40 | 48% | 33% to 63% |
+| personal (base model) | 17/40 | 42% | 29% to 58% |
 
-personal minus popularity: -20 points (95% range -54 to +14; gate needs +15)
-personal minus random: +7 points (95% range -24 to +37; gate needs +25)
+personal minus popularity: -5 points (95% range -27 to +17; gate needs +15)
+personal minus random: +18 points (95% range -3 to +38; gate needs +25)
 
-Tool's own verdict: **IN PROGRESS** (needs 40+ songs per condition before the gate can be read).
+Tool's own verdict: **FAIL**.
 
 ## Reading this honestly
-- At this sample size, even the optimistic end of the confidence interval for personal vs. popularity
-  (+14 points) falls just short of the +15 gate, so there is no scenario in this batch where the base
-  model is ahead of popularity.
-- Personal vs. random is genuinely undecided: the point estimate (+7) is well under the +25 gate, but
-  the interval (-24 to +37) is wide enough that more songs could move it either way.
-- This matches the pattern already seen on Adi (`step06b_base_model.md`, `step07_personal_layer.md`,
-  `step09_writeup.md`): popularity is hard to beat, and the base model so far sits between popularity
-  and random, closer to random.
-- Not a pass or a fail: 15 of the needed 40+ songs per condition is a first look, not the pre-registered
-  read. No part of the gate or the data collected is being changed because of this result.
+- The base model does not beat popularity: it is 5 points behind on the point estimate, and even the
+  optimistic end of the interval (+17) falls short of the +15 gate only by a hair in the other
+  direction — this is a near-miss, not a clean rejection, but the gate was fixed before the session and
+  it is not met.
+- The base model clearly beats random on point estimate (+18 of the +25 needed), and the interval's
+  lower bound (-3) just barely includes "no better than random," so a larger sample could plausibly
+  still fail this half too. It does not reach the pre-registered +25 bar.
+- Compared to the pattern on Adi (`step09_writeup.md`: personal 30%, popularity 72%, random 28% — a
+  47-point gap to popularity), the base model does noticeably better here (42% vs. 48%, a 6-point gap)
+  and further above random (42% vs. 25% vs. Adi's 30% vs. 28%, which was statistically indistinguishable
+  from random). On a person it has never seen, the frozen base's preference head tracks taste better
+  than it tracked Adi's fine-tuned personal layer did against popularity — but it still does not clear
+  either pre-registered bar.
+- 120 songs (40/condition) matches the design in `step08_preregistration.md`; at this size a share is
+  known to about +/-15 points, consistent with the width of the intervals above.
 
 ## Status
-L3.3: **IN PROGRESS**, not pass or fail. Resume with the same command (progress is saved, keyed by
-`--user cameron`) to add roughly 25 more songs per condition before reading the gate for real.
+L3.3: **FAIL** (base alone does not beat popularity, and does not clear the random gate either), on the
+full pre-registered 40 songs/condition. The base model is directionally better than chance and closer to
+popularity on a brand-new person than it was for Adi's fine-tuned model, which is evidence the base
+generalizes somewhat, but it does not pass the bar set in advance.
