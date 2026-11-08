@@ -80,10 +80,13 @@ Data: this person's own ratings of 30-second previews.
 - This step only collects and checks labels. Whether a model can learn from them is tested in later steps (base model, fine-tune, live test).
 - Reports contain counts and aggregates only, never song titles or the raw ratings.
 
-## Decision: Step 5 (re-rating) waived
+## Step 5 result (replaces the earlier waiver)
 
-On 2026-11-07 the user chose to assume their ratings are consistent instead of re-rating 20 songs a day later.
-The gate "re-rating is consistent" (>= 80% within 1 point, each question) is therefore **WAIVED, not passed**: it was
-not measured. Anything built on the ratings inherits this assumption. Most ratings are 2s, so consistency within 1 point
-would be easy to reach, but the roughly 12 songs rated 4-5 (the learnable positives) are the untested part.
-`python3 -m integration.orchestrator.run_rating_session --user adi --retest` can still be run later to measure it.
+The earlier plan to waive Step 5 was reversed by the user. The 20 songs were re-rated on 2026-11-07 about **1.3 hours** after
+the first pass (the tool's 12-hour wait was skipped with `--force`), so memory of the first answers may inflate agreement.
+
+- Within 1 point: quality 95%, preference 100% (need 80% each). Gate **PASS** (see reports/step05_ratings.md).
+- Exactly the same rating: quality 13 of 20, preference 10 of 20.
+- **Limit:** none of the 20 re-rated songs had a first preference of 4 or 5 (they were 1:5, 2:11, 3:4). The roughly 12 songs
+  that are the learnable positives were not re-tested, and most ratings sit at 1-2, so "within 1 point" is easy to reach.
+  A next-day re-rating that includes the liked songs would be a stronger test.

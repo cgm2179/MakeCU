@@ -117,6 +117,16 @@ Music topics are never consumed by motion, and the reverse.
 - `--hunt` (liked-song hunt): rates `--hunt-songs` (40) more songs, preference only, half picked by the bandit as likely-liked. Saved as `round` 3, `split` dev; not part of the 150, the gates or the held-out set. `python3 -m rl.ratings --user adi --export FILE --include-hunt` adds them to the labels.
 - File: `data/ratings/<user>.csv` (git-ignored): `user, song_id, quality, preference, split, round, time`. `rl/ratings.py` holds the checks (disagreement >= 15% by 2+ points, re-rating within 1 point on >= 80%) and `export_labels` (preference 4-5 = liked, 1-2 = disliked, 3 left out) for `rl.eval`.
 
+## Saved Profiles and Personalization (implemented)
+
+- `run(..., user="adi")` (or `run_loop --user adi`) loads `data/profiles/<user>.json` if it exists and saves it at the end. A missing profile starts fresh; a damaged or wrong-base one raises `ProfileError` and is never silently replaced.
+- `python3 -m rl.personalize --user adi [--include-heldout]` trains a profile from the ratings file (preference 4-5 liked, 1-2 disliked, hunt songs included) and saves it. Base model is `none-v0`: layer 1 fell back to popularity-as-objective because quality and preference ratings did not separate (reports/step04_ratings.md).
+
+## Live Session Test (implemented)
+
+- `python3 -m integration.orchestrator.run_live_session --user adi` plays songs from three hidden conditions in random blocks of three (random / one of the 10 most popular / one of the 10 the saved profile likes best), asks for a thumb at once, and stops the song the moment you answer. Never plays a song the profile was trained on. Saved to `data/live/<user>.csv` (git-ignored); resumes after `q`.
+- `python3 -m rl.live_test --user adi` summarises and writes `reports/step07_live_session.md`. Gate: personal >= popularity + 15 points and >= random + 25 points, 40+ songs per condition (about +/-15 points of noise at that size).
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
