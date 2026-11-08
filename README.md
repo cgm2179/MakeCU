@@ -184,23 +184,29 @@ python3 -m integration.orchestrator.run_camera_demo --songs 4 --taste --audio --
 
 Without `feedback=...` the loop uses the fake listener as before, so the simulation tests are unchanged.
 
-## Live Camera → RL → Arduino Arms
+## Live Camera → RL
 
-After applying `cv-rl-arms.patch` successfully from the repository root, start the live DroidCam-to-song-picker loop from that same folder:
+After applying `cv-rl-arms.patch` successfully from the repository root, start the live camera-to-song-picker loop from that same folder:
 
 ```bash
 python -m integration.orchestrator.run_loop --live --camera 2 --detector yunet
 ```
 
-The DroidCam preview opens. The loop picks a song, samples the camera reaction for about two seconds, then prints the RL reward and the arm profile for the detected emotion. If group liking is at or below **-0.2**, it also reports that it is discouraging the song and its genre. Without `--arm-port`, arm profiles are printed but are not sent to hardware.
+The camera preview opens. The loop picks a song, samples the camera reaction, then prints the RL reward and arm profile for the detected emotion. If group liking is at or below **-0.2**, it reports discouraging the song and its genre. To run the ESP32 steppers and obstacle-drive motors at the same time, flash and use the combined firmware in the section below.
 
-To drive the Arduino arms, flash `hardware/firmware/arms/arms.ino` to the board first, then pass the board's serial port:
+### Run camera/RL, emotion steppers, and obstacle drive together
 
-```bash
-python -m integration.orchestrator.run_loop --live --camera 2 --detector yunet --arm-port COM3
+The combined ESP32 firmware is `hardware/firmware/robot_combined/robot_combined.ino`. Flash this **single sketch** to the ESP32 in Arduino IDE; do not flash the standalone obstacle-drive or stepper-test sketches for this combined setup. It drives the motor-shield outputs forward when the ultrasonic sensor detects an object closer than 30 cm and stops otherwise, while accepting emotion-based stepper-arm commands over USB serial. Keep wheels raised or the robot secured during the first test.
+
+After uploading, close Arduino IDE's Serial Monitor so Python can open the ESP32 COM port. From the repository root in PowerShell, run:
+
+```powershell
+python -m integration.orchestrator.run_loop --live --camera 0 --detector yunet --arm-port COM5
 ```
 
-Replace `COM3` with the port shown for the Arduino in Windows Device Manager under **Ports**. The firmware expects servos on pins 9 and 10 and serial at 115200 baud; adjust the firmware pins for your wiring. Install `pyserial` in the active Python environment if it is not already installed. Tune the emotion-to-arm swing in `motion/control/arm_params.py`.
+Replace `COM5` with the ESP32 port shown in Windows Device Manager under **Ports**, and use the correct camera index if the computer camera is not `0`. Install `pyserial` in the active Python environment if needed. Emotion commands control the steppers; the wheel drive remains controlled by the distance threshold and is not affected by emotion.
+
+Power the stepper and drive motors from suitable external supplies and connect their grounds to ESP32 GND. An HC-SR04-style ECHO may output 5 V; ESP32 GPIOs are not 5 V tolerant, so use a level shifter or resistor divider before GPIO 18.
 
 ## Try It (fake inputs, no hardware)
 
@@ -212,4 +218,4 @@ python3 -m unittest rl.tests.test_bandit music.tests.test_playlist music.tests.t
 
 ## Status
 
-The fake-input core loop supports contextual-bandit RL, playlist control with manual override, and a motion stub. Applying `cv-rl-arms.patch` adds the live camera-to-RL flow and optional Arduino arm output described above; audio playback and camera-based pose tracking are separate integrations.
+The fake-input core loop supports contextual-bandit RL, playlist control with manual override, and a motion stub. Applying `cv-rl-arms.patch` adds the live camera-to-RL flow. The combined ESP32 firmware adds emotion-driven stepper arms and ultrasonic-triggered drive; audio playback and camera-based pose tracking are separate integrations.
