@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "reports"
 TEST_MODULES = [
     "rl.tests.test_bandit", "rl.tests.test_eval", "rl.tests.test_profile", "rl.tests.test_report",
-    "rl.tests.test_agreement", "rl.tests.test_signals",
+    "rl.tests.test_agreement", "rl.tests.test_signals", "rl.tests.test_ratings",
     "music.tests.test_playlist", "music.tests.test_dataset_pipeline", "music.tests.test_audio",
     "music.tests.test_mainstream_bias", "music.tests.test_gemini_lookup",
     "integration.tests.test_core_loop", "integration.tests.test_camera_loop",
@@ -225,8 +225,29 @@ def main(argv=None):
     ap.add_argument("--labels")
     ap.add_argument("--user")
     ap.add_argument("--agreement", help="Step 3: CSV written by run_agreement_check")
+    ap.add_argument("--ratings", help="Step 4/5: ratings CSV written by run_rating_session")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
+
+    if args.ratings:  # Steps 4 and 5: quality vs preference ratings
+        from rl import ratings as rtg
+        print("Running unit tests...")
+        tests = run_unit_tests()
+        rows = rtg.load_rows(args.ratings, args.user)
+        catalog_by_id = None
+        try:
+            from music.catalog.spotify_catalog import dataset_available, load_spotify
+            if dataset_available():
+                catalog_by_id = {x.song_id: x for x in load_spotify()}
+        except Exception:
+            pass
+        text = rtg.build_ratings_report(rows, tests, args.user or "", catalog_by_id, synthetic=Path(args.ratings).stem == "demo")
+        stem = Path(args.ratings).stem
+        path = write_report(args.step, "ratings" if stem == "adi" else f"ratings_{stem}", text)
+        print(f"Tests: ran {tests['ran']}, failed {tests['failed']}, errors {tests['errors']}, skipped {tests['skipped']}")
+        print(rtg.format_text(rtg.analyse(rows, catalog_by_id)))
+        print(f"Report written to {path}")
+        return 0 if tests["ok"] else 1
 
     if args.agreement:  # Step 3 has its own body: camera vs thumbs
         from rl import agreement as ag

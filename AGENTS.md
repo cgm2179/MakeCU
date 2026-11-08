@@ -111,6 +111,11 @@ Music topics are never consumed by motion, and the reverse.
 - Measured on synthetic worlds (`reports/step03c_signal_weighting_simulation.md`): weighting did not beat using the camera at full strength; reliability is poorly estimated from under ~150 songs with 12 features. Judge on real data (Step 3c) before turning it on.
 - Tried and removed: a per-person leniency offset in the bandit (no gain; see `rl/agent/bandit.py`).
 
+## Two-Question Ratings (implemented)
+
+- `python3 -m integration.orchestrator.run_rating_session --user adi` plays 30-second iTunes previews and asks QUALITY (1-5, "ignoring my taste, how well-made?") and PREFERENCE (1-5, "how much do I want to hear it?"). Songs are spread over mood x popularity band, one per artist, at most 6 per genre. Every 5th rated song is held out (30 of 150). `--retest` re-rates 20 songs at least 12 h later (Step 5).
+- File: `data/ratings/<user>.csv` (git-ignored): `user, song_id, quality, preference, split, round, time`. `rl/ratings.py` holds the checks (disagreement >= 15% by 2+ points, re-rating within 1 point on >= 80%) and `export_labels` (preference 4-5 = liked, 1-2 = disliked, 3 left out) for `rl.eval`.
+
 ## Module Interfaces (function names)
 
 | Module | Public entry point | Returns |
