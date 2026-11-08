@@ -123,36 +123,38 @@ PASTE THIS TO CLAUDE (3c, after you ran it):
   whether it passes the P0.3 gate and explain the numbers.
 
 
-STEP 4 - Rate 150 songs (about 40 minutes, one sitting if you can)
------------------------------------------------------------------
-This is the most important step. Claude builds a small rating tool. For each song you hear a
-30-second clip and answer TWO questions:
+STEP 4 - Rate 150 songs (the tool is built; about 60 minutes, do it in 2 or 3 sittings)
+--------------------------------------------------------------------------------------
+This is the most important step. Each song plays as a 30-second clip. After 15 seconds you are
+asked TWO questions while it keeps playing:
 
   Question 1, QUALITY: "Ignoring my own taste, how well-made or widely appreciated is this
                         song?"  1 (poor) to 5 (excellent)
   Question 2, PREFERENCE: "How much do I personally want to hear this?"  1 to 5
+
+Run (Terminal; resumes where you stopped, so you can quit with q any time):
+  cd ~/MakeCU && git checkout rl/eval-and-profiles
+  /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_rating_session --user adi
+  Keys: 1-5 answer, r replay the clip, s skip the song, q quit and save.
+  Add --listen 10 to hear 10 seconds before the questions (shorter session), or --blind to hide titles.
 
 Rules:
   - They are different questions. A song can be great but not for you (high Q1, low Q2), or a
     guilty pleasure (low Q1, high Q2). Those disagreements are exactly what teach the model.
   - Use the whole 1 to 5 range. Do not rate everything 3 or 4.
   - Do not look the song up first. Go with your first honest reaction.
-  - If you cannot hear a clip, skip it. Take a break every 30 songs.
-  - Songs are a mix of hits and unknown songs on purpose.
+  - Songs without a preview are skipped for you. Take a break every 30 songs (the tool prompts).
+  - Songs are a mix of hits and unknown songs, across moods, on purpose.
+  - Rate in a normal mood and place. Don't rate while tired or distracted.
 
-Done when: the tool says 150 songs rated. 30 of them are kept hidden as the final exam.
-Quick self-check: you should find yourself giving different numbers to Q1 and Q2 fairly
-often (at least 1 song in 7).
-
-PASTE THIS TO CLAUDE (4a):
-  Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoint L1.2: a rating tool with 30-second
-  iTunes clips, two questions per song (quality 1-5, preference 1-5), about 150 songs spread
-  across moods, genres and popularity, with 30 held out as a final test set. Save to
-  data/ratings/ (git-ignored) and let me quit and resume. Give me the command.
+Done when: the tool says 150 songs rated. Every 5th song (30 in total) is kept hidden as the
+final exam; you are never told which.
+Quick self-check: you should give different numbers to Q1 and Q2 fairly often (need 2+ points
+apart on at least 15% of songs).
 
 PASTE THIS TO CLAUDE (4b, when finished):
-  Step 4 done: I rated [N] songs. Check the L1.2 gate: how many differ by 2+ points between
-  quality and preference?
+  Step 4 done: I rated [N] songs. Run python3 -m rl.report --step 4 --ratings
+  data/ratings/adi.csv --user adi and tell me whether the L1.2 gates pass, in plain words.
 
 
 STEP 5 - Re-rate 20 songs the next day (about 10 minutes)
@@ -162,9 +164,12 @@ ratings are too noisy to learn from, and we need to know that.
 
 Done when: Claude reports how many of the 20 repeats were within 1 point (need 80% or more).
 
+Run (at least 12 hours after Step 4; it refuses sooner):
+  cd ~/MakeCU && /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_rating_session --user adi --retest
+
 PASTE THIS TO CLAUDE:
-  Step 5: start the L1.2 test-retest tool with 20 songs I already rated, then report the
-  agreement. Tell me whether my labels are reliable enough to train on.
+  Step 5 done. Run python3 -m rl.report --step 5 --ratings data/ratings/adi.csv --user adi and
+  tell me whether my labels are reliable enough to train on.
 
 
 STEP 6 - Claude trains the base model (you mostly wait; 1 to 3 hours)
