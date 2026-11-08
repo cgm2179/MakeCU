@@ -19,6 +19,7 @@ import statistics as st
 
 from integration.orchestrator.run_loop import run
 from music.catalog.songs import get_candidates
+from shared.config.defaults import DEMO_SONG_SECONDS
 from music.catalog.spotify_catalog import dataset_available
 from perception.emotion.camera_reaction import CameraFeedback
 from shared.schemas.messages import Filter, FilterSource
@@ -28,7 +29,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mood", default="gym")
     ap.add_argument("--songs", type=int, default=4, help="rounds to run")
-    ap.add_argument("--listen-seconds", type=float, default=1.0, help="how long the camera watches per song (no audio)")
+    ap.add_argument("--listen-seconds", type=float, default=None, help="how long the camera watches per song (no audio); default = DEMO_SONG_SECONDS")
     ap.add_argument("--taste", action="store_true", help="faces react to the song (to see the bandit adapt)")
     ap.add_argument("--empty", default="", help="comma-separated rounds with nobody in view, e.g. 4,9 (needs --taste)")
     ap.add_argument("--real", action="store_true", help="REAL webcam + DeepFace instead of mock (no fallback to mock)")
@@ -38,7 +39,7 @@ def main():
     ap.add_argument("--window", type=float, default=3.0, help="average the reaction over the last N seconds of the clip (--real); 0 = single instant")
     ap.add_argument("--bored", action="store_true", help="re-enable their stillness-based 'bored' label (off by default)")
     ap.add_argument("--audio", action="store_true", help="play iTunes previews; the reaction is read when the clip ends")
-    ap.add_argument("--clip-seconds", type=float, default=6)
+    ap.add_argument("--clip-seconds", type=float, default=None, help="iTunes preview length; default = DEMO_SONG_SECONDS (30)")
     ap.add_argument("--mainstream-bias", type=float, default=None, metavar="0..1",
                     help="lean toward well-known songs on the database path (default 0.5; 0 = off)")
     ap.add_argument("--seed", type=int, default=0)
@@ -67,14 +68,17 @@ def main():
         feedback = CameraFeedback(mock=True)
         print("Mock cameras: perception_cv.build_service(mock=True) (random faces, not tied to the song)")
 
+    listen_s = a.listen_seconds if a.listen_seconds is not None else DEMO_SONG_SECONDS
+    clip_s = a.clip_seconds if a.clip_seconds is not None else DEMO_SONG_SECONDS
+    print(f"Each song runs for {clip_s if a.audio else listen_s:.0f}s (DEMO_SONG_SECONDS={DEMO_SONG_SECONDS}; change in shared/config/defaults.py)")
     player = None
     if a.audio:
         from music.playback.audio import AudioPlayer
 
-        player = AudioPlayer(clip_seconds=a.clip_seconds)
+        player = AudioPlayer(clip_seconds=clip_s)
     try:
         out = run(a.songs, event=a.mood, seed=a.seed, pool=pool, feedback=feedback, player=player,
-                  wait_for_playback=bool(player), listen_seconds=a.listen_seconds, round_delay=0,
+                  wait_for_playback=bool(player), listen_seconds=listen_s, round_delay=0,
                   overrides={}, verbose=not a.quiet, mainstream_bias=a.mainstream_bias)
     finally:
         if player:

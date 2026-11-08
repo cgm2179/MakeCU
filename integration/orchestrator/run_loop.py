@@ -23,6 +23,7 @@ from rl.agent.bandit import BanditAgent, mean_confidence
 from rl.agent.context import Context, dominant_emotion, filter_key
 from rl.env.simulated_listener import EMOTIONS, SimulatedListener
 from shared.bus.bus import Bus
+from shared.config.defaults import DEMO_SONG_SECONDS
 from shared.schemas.messages import Filter, FilterSource
 
 # In --simulate mode the fake phone changes the song mid-way at these steps.
@@ -113,8 +114,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
     while simulate_rounds is None or step < simulate_rounds:
         step += 1
         ctx = Context(filter_key(flt), emotion)
-        if forced:  # the user asked for this song from the phone
-            song, mode, forced = forced, "phone", None
+        if forced is not None:  # pre-queued (demo next-up) or phone manual override
+            song, mode, forced = forced, ("phone" if getattr(forced, "_from_phone", False) else "queued"), None
         else:
             playable = [x for x in pool if x.song_id not in unavailable] or pool
             song, mode = agent.choose_next_song(playable, last_id, ctx, recent_ids=controller.history[-4:])
@@ -148,12 +149,19 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             phone.change_song(overrides[step])
             say(f"  phone: user requested {overrides[step]} (current song keeps playing)")
 
+        # Demo-friendly fixed duration: every song runs for DEMO_SONG_SECONDS then we advance.
+        # No mid-song emotion skips — the DJ does not cut a track early.
+        play_secs = DEMO_SONG_SECONDS
         if wait_for_playback and player is not None:
-            player.wait()  # let the clip play out; the camera keeps reading meanwhile
+            # iTunes previews are ~30 s; player may already be clipped to play_secs
+            player.wait()
         elif feedback is not None:
-            time.sleep(listen_seconds)
+            time.sleep(listen_seconds if listen_seconds is not None else play_secs)
         elif listener and react is None:
-            time.sleep(round_delay)  # a real song would take much longer
+            # simulate mode stays fast unless the caller asked for a real delay
+            time.sleep(round_delay if round_delay > 0 else 0)
+        else:
+            time.sleep(play_secs)
         if feedback is not None:
             reaction = feedback.get_group_reaction(song.song_id)  # read at the end of the clip
         elif react is not None:
@@ -211,12 +219,37 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
                 f"\"{song.title}\" and genre {song.genre}")
         say(f"  arms ({emotion}): period {profile.period_s:.2f}s  "
             f"amp {profile.amplitude:.2f}  phase {profile.phase_offset_deg:.0f} deg")
+
+        # --- Demo messaging: what the agent will recommend more of, and the next track ---
+        # Songs always finish their DEMO_SONG_SECONDS window; we only change what comes *next*.
+        next_ctx = Context(ctx.filter_key, emotion)
+        playable = [x for x in pool if x.song_id not in unavailable]
+        next_song, next_mode = agent.choose_next_song(
+            playable, last_song_id=song.song_id, context=next_ctx,
+            recent_ids=controller.history[-4:])
+        cur_genre = song.genre or "this"
+        next_genre = next_song.genre or "similar"
+        if reaction.group_liking <= UNHAPPY_LIKING or emotion in ("sad", "bored", "angry"):
+            if next_genre != cur_genre:
+                say(f"  Don't like {cur_genre}? Recommending more {next_genre} instead!")
+            else:
+                say(f"  Not feeling {cur_genre} right now — trying a different {next_genre} track next.")
+        elif emotion == "happy" or reaction.group_liking > 0.25:
+            say(f"  Loving the {cur_genre} energy! Queuing more {next_genre}.")
+        else:
+            say(f"  Neutral on {cur_genre}. Exploring {next_genre} next.")
+        say(f"  >>> NEXT UP ({next_mode}): {describe(next_song)}")
+
         manual = controller.take_manual_change()  # song boundary: apply phone change
         if manual:
             agent.record_manual_override(manual, song, ctx)
+            manual._from_phone = True  # type: ignore[attr-defined]
             forced = manual
             say(f"  manual override recorded: +signal for {manual.title}, "
                 f"-signal for {song.title}; {manual.title} plays next")
+        else:
+            # Make the announced next song actually the one that plays (no surprise re-roll).
+            forced = next_song
         log.append({"step": step, "song_id": song.song_id, "mode": mode, "emotion": ctx.emotion,
                     "song": song, "reward": info["reward"], "skipped": bool(info.get("skipped")),
                     "reaction": reaction})
@@ -256,6 +289,10 @@ if __name__ == "__main__":
     react = None
     if args.live:
         from perception.bridge import LiveCamera, start_camera
+        # sample a few seconds of faces, but the song itself still runs for DEMO_SONG_SECONDS
         react = LiveCamera(start_camera(args.camera, args.detector), sample_s=args.sample)
+        print(f"Demo mode: each song plays ~{DEMO_SONG_SECONDS}s then we announce the next track.")
+        print(f"  (change DEMO_SONG_SECONDS in shared/config/defaults.py to speed up or slow down)")
     run(args.simulate, args.event, args.seed, react=react,
-        arms=EmotionArms(ArmLink(args.arm_port)))
+        arms=EmotionArms(ArmLink(args.arm_port)),
+        listen_seconds=DEMO_SONG_SECONDS)
