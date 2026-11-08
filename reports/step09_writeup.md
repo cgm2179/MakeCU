@@ -20,7 +20,7 @@ shape of a face's reaction over a clip predicted the thumb with AUC about 0.80 i
 | Re-rating is consistent | >= 80% within 1 point | quality 95%, preference 100% (re-rated only 1.3 h later; none of the liked songs were retested) | PASS, weak evidence |
 | Final held-out test (30 songs, 4 liked) | beat baselines | bandit 0.745, popularity 0.827, random 0.721 AUC | inconclusive |
 | Live session, 40 songs per condition | personal >= popularity + 15 pts and >= random + 25 pts | personal 30%, popularity 72%, random 28% | **FAIL** |
-| New-user check (L3.3) | base beats popularity on a new person | not run | not done |
+| New-user check (L3.3), 40 songs/condition | base >= popularity + 15 pts and >= random + 25 pts | personal 42%, popularity 48%, random 25% (`step09_new_user_check.md`) | **FAIL** (-5 pts vs. popularity, +18 vs. random) |
 
 Offline cross-validation of the bandit reached AUC 0.915, but that number was inflated: the "liked-song hunt" picked songs that
 resemble each other, so folds contained near-duplicates. The held-out and live tests are the honest figures.
@@ -47,9 +47,12 @@ resemble each other, so folds contained near-duplicates. The held-out and live t
 - The 0.80 camera result was found by looking at features after the fact; it needs a fresh session before it is trusted or used
   as a reward. The nodding feature did not replicate.
 - Song features are Spotify-dataset numbers; Gemini lookups, where used, are rough estimates.
-- Not done: the new-user check, and a next-day re-rating that includes the liked songs.
+- The new-user check (`step09_new_user_check.md`) is one person; still not done is a next-day
+  re-rating that includes the liked songs.
 
 ## Recommended next steps
 1. Replicate the camera reaction-shape result on a new day (40+ songs, 12+ per thumb) before turning the camera reward on.
 2. Keep the popularity-leaning default and let the bandit learn within a session; judge it on a live session with thumbs.
-3. Run the new-user check with a teammate (about 40 songs) to see whether any of this is specific to one person.
+3. Run the new-user check on a third person (`step09_new_user_check.md`: base alone failed the gate for
+   Cameron too, though it tracked taste better there than the fine-tuned model did for Adi) to see
+   whether that pattern holds.
