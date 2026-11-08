@@ -93,7 +93,7 @@ The first run had only 4 liked songs out of 40, so the camera could not be judge
 with smart picking: it uses your earlier thumbs to play songs you are likely to like (half) and
 random ones (half). It resumes and adds to your existing file.
   git checkout rl/eval-and-profiles
-  /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 80 --moods gym,party,chill,happy,sad,study
+  .venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 80 --moods gym,party,chill,happy,sad,study
 Then send Claude the printed result with the 3c prompt below. Done when at least 10 songs got a
 thumb up and 10 a thumb down.
 
@@ -102,7 +102,7 @@ The tool now also records head movement (nodding on the beat), peak reaction and
 clip. We need at least 60 songs with these, 15 liked and 15 disliked, to see if they help.
   Session 1, you alone (quiet room):
     git checkout rl/eval-and-profiles
-    /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 150 --setting quiet --moods gym,party,chill,happy,sad,study
+    .venv/bin/python -m integration.orchestrator.run_agreement_check --user adi --smart --songs 150 --setting quiet --moods gym,party,chill,happy,sad,study
     (it adds about 70 songs to your file; keep sitting and reacting naturally)
   Session 2, busy setting with 2 or 3 teammates in front of the camera, music a bit louder:
     ... same command but:  --user adi_busy --group-size 3 --setting busy --songs 40 --moods party,gym,happy
@@ -134,7 +134,7 @@ asked TWO questions while it keeps playing:
 
 Run (Terminal; resumes where you stopped, so you can quit with q any time):
   cd ~/MakeCU && git checkout rl/eval-and-profiles
-  /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_rating_session --user adi
+  .venv/bin/python -m integration.orchestrator.run_rating_session --user adi
   Keys: 1-5 answer, r replay the clip, s skip the song, q quit and save.
   Add --listen 10 to hear 10 seconds before the questions (shorter session), or --blind to hide titles.
 
@@ -165,7 +165,7 @@ ratings are too noisy to learn from, and we need to know that.
 Done when: Claude reports how many of the 20 repeats were within 1 point (need 80% or more).
 
 Run (at least 12 hours after Step 4; it refuses sooner):
-  cd ~/MakeCU && /private/tmp/claude-501/-Users-adityaambani-MakeCU/0d304aa9-0aaa-40a5-8f62-33b344cbfaa4/scratchpad/venv/bin/python -m integration.orchestrator.run_rating_session --user adi --retest
+  cd ~/MakeCU && .venv/bin/python -m integration.orchestrator.run_rating_session --user adi --retest
 
 PASTE THIS TO CLAUDE:
   Step 5 done. Run python3 -m rl.report --step 5 --ratings data/ratings/adi.csv --user adi and
@@ -274,3 +274,14 @@ PROGRESS TRACKER (tick as you go)
 [ ] Step 8  Final exam once, then live session
 [ ] Step 9  Tested on a second person
 [ ] Step 10 Write-up done
+
+------------------------------------------------------------
+STATUS UPDATE (2026-11-07)
+- Camera libraries: one-time setup  python3 -m venv .venv && .venv/bin/python -m pip install --upgrade pip
+  && .venv/bin/pip install -r requirements-camera.txt   (then follow the OpenCV note at the bottom of that file).
+  Commands above use .venv/bin/python; run them from ~/MakeCU.
+- Step 4 done: 150 songs rated. The quality-vs-preference gate FAILED (1% differ), see reports/step04_ratings.md.
+- Step 4b done: liked-song hunt (40 songs):  python3 -m integration.orchestrator.run_rating_session --user adi --hunt
+- Step 4c done: one-time final test, inconclusive (only 4 liked songs held out), see reports/step04c_final_test.md.
+- Step 5 (re-rating) WAIVED by choice: consistency is assumed, not measured.
+- Still to do: quiet-room camera session (Step 3c), command above with --setting quiet.
