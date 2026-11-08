@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import random
 import time
+from pathlib import Path
 
 from rl import live_test as lt
 
@@ -70,6 +71,34 @@ def run_session(pool, agent, user, csv_path, player=None, input_fn=input, say=pr
     return rated
 
 
+class FineTunedAgent:
+    """Adapter so the 'personal' condition can be the Step 7 model (frozen base + personal layer): pick_song asks agent.predict()."""
+
+    def __init__(self, layer):
+        self.layer = layer
+
+    def predict(self, song, context=None):
+        return self.layer.logit(song)
+
+
+def seen_song_ids(subject, data_dir=None):
+    """Every song this person has already rated, thumbed in the camera sessions, or thumbed in an earlier live session.
+    The personal models were fitted on those, so the live pool must not contain them."""
+    from rl import agreement as ag
+    from rl import ratings as rt
+    root = Path(data_dir) if data_dir else Path(__file__).resolve().parents[2] / "data"
+    ids = {r["song_id"] for r in rt.load_rows(root / "ratings" / f"{subject}.csv", subject)}
+    ag_path = root / "agreement" / f"{subject}.csv"
+    if ag_path.exists():
+        ids |= {r["song_id"] for r in ag.load_rows(ag_path, subject)}
+    live_dir = root / "live"
+    if live_dir.exists():
+        for f in live_dir.glob("*.csv"):
+            if f.stem == subject or f.stem.startswith(subject + "_"):
+                ids |= {r["song_id"] for r in lt.load_rows(f)}
+    return ids
+
+
 def build_pool(moods, rated_ids):
     from music.catalog.songs import get_candidates
     from shared.schemas.messages import Filter, FilterSource
@@ -89,20 +118,36 @@ def main(argv=None):
     ap.add_argument("--moods", default="gym,party,chill,happy,sad,study")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-audio", action="store_true")
+    ap.add_argument("--subject", default=None,
+                    help="whose ratings, thumbs and saved model to use (default: --user). Lets --user adi_v2 write a separate session file")
+    ap.add_argument("--model", choices=("profile", "fine-tuned"), default="profile",
+                    help="what drives condition C: the old ratings-trained profile, or the Step 7 base + personal layer")
     a = ap.parse_args(argv)
+    subject = a.subject or a.user
 
     from music.catalog.spotify_catalog import dataset_available
-    from rl import ratings as rt
-    from rl.agent.profile import ProfileError, load_profile
     if not dataset_available():
         raise SystemExit("Dataset missing. Run: python3 -m music.catalog.download_spotify")
-    try:
-        agent = load_profile(a.user)
-    except ProfileError as e:
-        raise SystemExit(f"{e}\nCreate one first: python3 -m rl.personalize --user {a.user} --include-heldout")
-    rated_ids = {r["song_id"] for r in rt.load_rows(rt.ratings_path(a.user), a.user)}
+    if a.model == "fine-tuned":
+        from rl import base_lastfm as bl
+        from rl import personal_layer as pl
+        try:
+            base = bl.load_base(bl.MODEL_DIR / "base_model_v2.json")
+            layer = pl.load_personal(pl.PROFILE_DIR / f"{subject}_personal_v2.json", base)
+        except (OSError, ValueError) as e:
+            raise SystemExit(f"{e}\nNeeds models/base_model_v2.json and data/profiles/{subject}_personal_v2.json "
+                             f"(python3 -m rl.personal_layer --user {subject}).")
+        agent = FineTunedAgent(layer)
+        print(f"Condition C = fine-tuned model (base {base.id} {base.sha256[:8]} + personal layer for {subject}).")
+    else:
+        from rl.agent.profile import ProfileError, load_profile
+        try:
+            agent = load_profile(subject)
+        except ProfileError as e:
+            raise SystemExit(f"{e}\nCreate one first: python3 -m rl.personalize --user {subject} --include-heldout")
+    rated_ids = seen_song_ids(subject)
     pool = build_pool([m.strip() for m in a.moods.split(",") if m.strip()], rated_ids)
-    print(f"{len(pool)} candidate songs (none you have rated before). Conditions are hidden.")
+    print(f"{len(pool)} candidate songs (none you have rated or thumbed before). Conditions are hidden.")
     player = None
     if not a.no_audio:
         from music.playback.audio import AudioPlayer

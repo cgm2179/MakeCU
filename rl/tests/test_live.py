@@ -120,6 +120,42 @@ class TestSession(unittest.TestCase):
         self.assertEqual(n, 3)
 
 
+class TestFineTunedCondition(unittest.TestCase):
+    def test_adapter_ranks_by_the_personal_layer_and_pick_song_uses_it(self):
+        from rl.tests.test_personal_layer import FEAT, make_base
+        from rl import personal_layer as pl
+        with tempfile.TemporaryDirectory() as d:
+            base = make_base(d, favour_genre="jazz")
+            items = [(s, 1 if s.genre == "jazz" else 0) for s in CAT[:100]]
+            layer = pl.PersonalLayer.fit(base, items, lam=0.1)
+            agent = rls.FineTunedAgent(layer)
+            self.assertEqual(agent.predict(CAT[5]), layer.logit(CAT[5]))
+            pool = CAT[100:]
+            top = sorted((layer.logit(p) for p in pool))[-lt.TOP_K:]
+            rng = random.Random(0)
+            for _ in range(30):
+                self.assertGreaterEqual(layer.logit(lt.pick_song("personal", pool, agent, rng)), top[0])
+
+    def test_seen_song_ids_covers_ratings_thumbs_and_earlier_live_files_but_not_other_people(self):
+        import csv
+        from rl import agreement as ag
+        from rl import ratings as rt
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            rt.append_row(root / "ratings" / "adi.csv", {"user": "adi", "song_id": "r1", "quality": 3, "preference": 3,
+                                                       "split": "dev", "round": 3, "time": 0})
+            (root / "agreement").mkdir()
+            with open(root / "agreement" / "adi.csv", "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=ag.FIELDS, restval="")
+                w.writeheader()
+                w.writerow({"user": "adi", "song_id": "a1", "thumb": 1, "liking": 0.1, "confidence": 0.9, "emotion": "happy", "time": 0})
+            for name, sid in (("adi", "l1"), ("adi_v2", "l2"), ("adina", "other")):
+                lt.append_row(root / "live" / f"{name}.csv", {"user": name, "seq": 0, "condition": "random", "song_id": sid,
+                                                              "thumb": 1, "time": 0})
+            self.assertEqual(rls.seen_song_ids("adi", root), {"r1", "a1", "l1", "l2"})
+            self.assertEqual(rls.seen_song_ids("nobody", root), set())
+
+
 class TestAnalysis(unittest.TestCase):
     def rows(self, liked):
         out, i = [], 0

@@ -1,6 +1,6 @@
 # Step 8: can anything beat "play popular songs" on Adi's thumbs?
 
-Date: 2026-11-08. Tests: 180 ran, 0 failed. Follows the failed live test (reports/step07_live_session.md).
+Date: 2026-11-08. Tests: 180 ran, 0 failed. Follows the failed live test (reports/step08_live_session_v1.md).
 
 ## Data
 264 thumb labels (100 liked, 36%): 150 from the camera-agreement sessions (data/agreement/adi.csv) and 120 from the live session

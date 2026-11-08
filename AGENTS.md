@@ -125,7 +125,7 @@ Music topics are never consumed by motion, and the reverse.
 ## Live Session Test (implemented)
 
 - `python3 -m integration.orchestrator.run_live_session --user adi` plays songs from three hidden conditions in random blocks of three (random / one of the 10 most popular / one of the 10 the saved profile likes best), asks for a thumb at once, and stops the song the moment you answer. Never plays a song the profile was trained on. Saved to `data/live/<user>.csv` (git-ignored); resumes after `q`.
-- `python3 -m rl.live_test --user adi` summarises and writes `reports/step07_live_session.md`. Gate: personal >= popularity + 15 points and >= random + 25 points, 40+ songs per condition (about +/-15 points of noise at that size).
+- `python3 -m rl.live_test --user adi` summarises and writes `reports/step08_live_session*.md` (v1 = the first session of the old ratings-trained profile). Gate: personal >= popularity + 15 points and >= random + 25 points, 40+ songs per condition (about +/-15 points of noise at that size).
 
 ## Base Model v1 (implemented)
 

@@ -127,7 +127,7 @@ def format_text(a):
 
 def build_live_report(rows, tests, user, profile_note=""):
     a = analyse(rows)
-    parts = [f"# Step 7 report: live session (personal model vs popularity vs random)", "",
+    parts = [f"# Step 8 report: live session (personal model vs popularity vs random), {user}", "",
              f"- Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  ", f"- User: {user}", "",
              "## 1. Unit tests", "",
              f"- Ran {tests['ran']}: {tests['ran'] - tests['failed'] - tests['errors'] - tests['skipped']} passed, "
@@ -152,7 +152,7 @@ def build_live_report(rows, tests, user, profile_note=""):
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="Summarise a live session and write reports/step07_live_session.md.")
+    ap = argparse.ArgumentParser(description="Summarise a live session and write reports/step08_live_session[_USER].md.")
     ap.add_argument("--user", default="adi")
     ap.add_argument("--no-report", action="store_true")
     a = ap.parse_args(argv)
@@ -163,7 +163,7 @@ def main(argv=None):
     if not a.no_report:
         from rl.report import run_unit_tests, write_report
         tests = run_unit_tests()
-        path = write_report(7, "live_session", build_live_report(rows, tests, a.user))
+        path = write_report(8, "live_session" if a.user == "adi" else f"live_session_{a.user}", build_live_report(rows, tests, a.user))
         print(f"Tests: ran {tests['ran']}, failed {tests['failed']}, errors {tests['errors']}, skipped {tests['skipped']}")
         print(f"Report written to {path}")
     return 0
