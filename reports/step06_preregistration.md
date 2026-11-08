@@ -33,3 +33,10 @@ quality and preference differ on >= 15% of songs **FAIL (1%)**. So the L1 gate c
 ## Training protocol
 Weighted logistic regression over the songs in K (each song's weight = how many train users like it / do not like it), gradient descent,
 checkpoints saved periodically, best checkpoint chosen by validation loss on validation users, test users read once.
+
+## Addendum (user request, added before any Last.fm result was computed): fits in an ESP32's RAM
+- The ESP32 has about 520 KB of SRAM in total (Wi-Fi/Bluetooth and the program use much of it). Requirement: the deployed base model must
+  be smaller than that. Pre-set limits: **hard cap 520 KB; working budget 32 KB** (about 6% of RAM, leaving room for everything else).
+- Counted as the in-memory size on the device: every number stored as a 4-byte float32, plus the genre-name table.
+- Deliverables: `models/base_model_v2.bin` (compact binary) and `models/base_model_v2.h` (C arrays) built from the same numbers, with a test
+  that decodes the binary and reproduces the host model's scores. Checkpoints and the JSON stay on the host computer, not the device.
