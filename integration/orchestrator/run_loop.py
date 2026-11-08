@@ -4,6 +4,7 @@ Run from the repo root:
     python3 -m integration.orchestrator.run_loop                      # you give l / d feedback
     python3 -m integration.orchestrator.run_loop --simulate 25        # simulated listener + phone
     python3 -m integration.orchestrator.run_loop --event study --simulate 25
+    python3 -m integration.orchestrator.run_loop --live --camera 2 --detector yunet
 """
 from __future__ import annotations
 
@@ -12,7 +13,9 @@ import random
 import time
 
 from app.api.fake_phone import FakePhone
+from motion.control.emotion_arms import EmotionArms
 from motion.control.stub_motion import MotionStub
+from motion.drivers.arm_link import ArmLink
 from music.catalog.songs import get_candidates
 from music.playback.playlist import PlaylistController
 from perception.emotion.fake_reaction import get_group_reaction
@@ -25,6 +28,8 @@ from shared.schemas.messages import Filter, FilterSource
 # In --simulate mode the fake phone changes the song mid-way at these steps.
 DEFAULT_OVERRIDES = {6: "s6", 14: "s11"}
 MAX_SKIPS = 15  # give up after this many unplayable songs in a row
+# group_liking at or below this is unhappy: the update lowers the song and its genre.
+UNHAPPY_LIKING = -0.2
 
 
 def describe(song) -> str:
@@ -48,8 +53,8 @@ def print_learning(agent: BanditAgent, ctx: Context) -> None:
 
 def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=True,
         round_delay=0.02, pool=None, listener=None, taste_shift=None, agent=None,
-        player=None, wait_for_playback=False, feedback=None, listen_seconds=2.0,
-        mainstream_bias=None, reward_model=None, thumb_fn=None):
+        player=None, wait_for_playback=False, react=None, feedback=None,
+        listen_seconds=2.0, mainstream_bias=None, arms=None, reward_model=None, thumb_fn=None):
     """Run the loop. Returns a dict of what happened (used by the tests).
 
     pool         : candidate songs; default = get_candidates(first filter)
@@ -63,9 +68,11 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
                    from every signal available: thumb_fn(song) (+1 / -1 / None), a phone song change during
                    the clip (behaviour) and the camera weighted by how reliable it has proved for this person.
     wait_for_playback : wait for each clip to finish before taking the reaction
+    react        : callable(song_id) -> GroupReaction from the live camera
     feedback     : real reactions instead of a fake listener, e.g. CameraFeedback (starts its
                    perception service here). With audio the reaction is read at the end of
                    the clip; without audio, after listen_seconds.
+    arms         : EmotionArms; default sends arm lines in memory (no serial)
     """
     say = print if verbose else (lambda *a, **k: None)
     bus = Bus()
@@ -85,10 +92,10 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             feedback.start()  # perception service runs in the background from here on
         if getattr(feedback, "calibrate_seconds", 0) > 0:
             feedback.calibrate(say=say)  # measure the resting baseline before any music
-    elif listener is None and simulate_rounds:
+    elif react is None and listener is None and simulate_rounds:
         listener = SimulatedListener(seed=seed or 0)
     if overrides is None:
-        if not simulate_rounds or feedback is not None:
+        if not simulate_rounds or feedback is not None or react is not None:
             overrides = {}
         elif all(i in controller.catalog for i in DEFAULT_OVERRIDES.values()):
             overrides = DEFAULT_OVERRIDES
@@ -97,6 +104,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             overrides = {6: rng.choice(pool).song_id, 14: rng.choice(pool).song_id}
     motion = MotionStub()
     motion.start()  # robot movement runs on its own; music events never touch it
+    if arms is None:
+        arms = EmotionArms()
 
     emotion, step, last_id, forced = "neutral", 0, None, None
     unavailable: set = set()  # songs the audio output could not play
@@ -135,7 +144,7 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         if feedback is not None and hasattr(feedback, "begin_song"):
             feedback.begin_song(song)
 
-        if (listener or feedback is not None) and step in overrides:  # user taps another song on their phone, mid-song
+        if (listener or feedback is not None or react is not None) and step in overrides:  # user taps another song mid-song
             phone.change_song(overrides[step])
             say(f"  phone: user requested {overrides[step]} (current song keeps playing)")
 
@@ -143,10 +152,12 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             player.wait()  # let the clip play out; the camera keeps reading meanwhile
         elif feedback is not None:
             time.sleep(listen_seconds)
-        elif listener:
+        elif listener and react is None:
             time.sleep(round_delay)  # a real song would take much longer
         if feedback is not None:
             reaction = feedback.get_group_reaction(song.song_id)  # read at the end of the clip
+        elif react is not None:
+            reaction = react(song.song_id)
         elif listener:
             reaction = listener.react(song)
         else:
@@ -154,11 +165,11 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         if reaction is None:
             say("Bye!")
             break
-        if feedback is not None:
+        if feedback is not None or react is not None:
             shares = {k: round(v, 2) for k, v in sorted(reaction.group_emotion.items(), key=lambda kv: -kv[1]) if v}
             say(f"  camera reaction: people={len(reaction.people)}, group_liking={reaction.group_liking:+.2f}, "
                 f"mean confidence={mean_confidence(reaction):.2f}, emotions={shares}")
-            cal = getattr(feedback, "last_calibration", None)
+            cal = getattr(feedback, "last_calibration", None) if feedback is not None else None
             if cal:
                 base = f"{cal['baseline']:+.2f}" if cal["baseline"] is not None else "none"
                 win = f" (avg of last {cal['window']:.0f} s)" if cal["window"] else ""
@@ -170,7 +181,7 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
             for pr in reaction.people:
                 say(f"    person {pr.person_id}: emotion={pr.emotion}, liking={pr.liking:+.2f}, "
                     f"confidence={pr.confidence:.2f}")
-            if hasattr(feedback, "consume_stats"):
+            if feedback is not None and hasattr(feedback, "consume_stats"):
                 frames, avg_ms, faces = feedback.consume_stats()
                 say(f"  camera feed this clip: {frames} frames analysed (avg {avg_ms:.0f} ms each), "
                     f"faces in last frame: {faces}")
@@ -194,6 +205,12 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
                 f"{'keep similar' if info['reward'] > 0 else 'switch'}")
 
         emotion = dominant_emotion(reaction)
+        profile = arms.apply(emotion)
+        if reaction.group_liking <= UNHAPPY_LIKING:
+            say(f"  unhappy (liking {reaction.group_liking:+.2f}): discouraging "
+                f"\"{song.title}\" and genre {song.genre}")
+        say(f"  arms ({emotion}): period {profile.period_s:.2f}s  "
+            f"amp {profile.amplitude:.2f}  phase {profile.phase_offset_deg:.0f} deg")
         manual = controller.take_manual_change()  # song boundary: apply phone change
         if manual:
             agent.record_manual_override(manual, song, ctx)
@@ -217,8 +234,8 @@ def run(simulate_rounds=None, event="party", seed=None, overrides=None, verbose=
         say(f"  when {emo:<7}: " + "; ".join(f"{s.title} ({s.genre}, {p:+.2f})" for s, p in recs))
     say(f"\nMotion stub: {len(motion.tick_times)} ticks, {motion.restarts} restarts, "
         f"longest gap {motion.longest_gap() * 1000:.0f} ms (music events did not interrupt it)")
-    return {"agent": agent, "controller": controller, "motion": motion, "log": log,
-            "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt),
+    return {"agent": agent, "controller": controller, "motion": motion, "arms": arms,
+            "log": log, "rewards": rewards, "pool": pool, "ctx_filter": filter_key(flt),
             "skipped_rounds": skipped_rounds}
 
 
@@ -227,5 +244,18 @@ if __name__ == "__main__":
     parser.add_argument("--simulate", type=int, metavar="N", help="run N rounds with a simulated listener")
     parser.add_argument("--event", default="party", help="first filter, e.g. party, study")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--live", action="store_true",
+                        help="read faces from the camera instead of the keyboard")
+    parser.add_argument("--camera", type=int, default=2, help="DroidCam index (default 2)")
+    parser.add_argument("--detector", default="yunet", help="DeepFace detector, e.g. yunet")
+    parser.add_argument("--sample", type=float, default=2.0,
+                        help="seconds of camera time per song before scoring the reaction")
+    parser.add_argument("--arm-port", default=None,
+                        help="Arduino serial port, e.g. COM3. Omit to only print arm lines.")
     args = parser.parse_args()
-    run(args.simulate, args.event, args.seed)
+    react = None
+    if args.live:
+        from perception.bridge import LiveCamera, start_camera
+        react = LiveCamera(start_camera(args.camera, args.detector), sample_s=args.sample)
+    run(args.simulate, args.event, args.seed, react=react,
+        arms=EmotionArms(ArmLink(args.arm_port)))

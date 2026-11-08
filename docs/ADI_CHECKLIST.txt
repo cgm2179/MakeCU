@@ -1,0 +1,231 @@
+ADI'S CHECKLIST: TRAINING YOUR PERSONAL MUSIC MODEL
+====================================================
+
+How this works
+--------------
+You do the human parts (decisions, rating songs, trying the robot). Claude builds the tools
+and does the training. After each step, copy the "PASTE THIS TO CLAUDE" box into the Claude
+panel in VS Code and send it. Each prompt tells Claude where the plan is, so it works even in a
+brand-new chat.
+
+The full technical plan is in docs/THREE_LAYER_CHECKPOINTS.md. You do not need to read it.
+
+Be honest in every rating. The model learns YOUR taste. If you rate songs to look cool or to
+help the robot, it will learn the wrong thing.
+
+Your total time: about 3 to 4 hours, spread over a few days.
+
+Before you start (5 minutes)
+----------------------------
+[ ] Open the MakeCU project in VS Code and open the Claude panel.
+[ ] Laptop camera works, speakers or headphones work, you are on the internet.
+[ ] Quiet room with the light in FRONT of your face (not a window behind you).
+[ ] Camera permission is allowed for VS Code (System Settings > Privacy & Security > Camera).
+
+
+STEP 1 - Make 4 decisions (10 minutes, no tools needed)
+-------------------------------------------------------
+Answer these and send them. Defaults are in brackets; "ok" means take the default.
+
+  a) Base model: Claude trains a small model on your laptop and uses Gemini only as an
+     extra source of song facts. [ok]
+  b) "Objective" opinion means: song popularity PLUS your own "how well-made is this?" rating. [ok]
+  c) Training data: use free public listening data from many people if Claude can find a
+     usable set, otherwise just your own ratings (the "general preference" part will then be thin). [ok]
+  d) Song titles and artists (only those, never your face or ratings) may be sent to Apple
+     (to play previews) and Google (to look up unknown songs). [yes/no]
+  e) Pass marks in docs/THREE_LAYER_CHECKPOINTS.md (the ones marked "proposed"): [accept / change]
+
+Done when: you have answered a to e.
+
+PASTE THIS TO CLAUDE:
+  Read docs/THREE_LAYER_CHECKPOINTS.md. Step 1 decisions: (a) ok (b) ok (c) ok
+  (d) yes (e) accept. Record these in the doc as agreed, then tell me what Step 2 is.
+
+
+STEP 2 - Claude builds the scoring tool and the save feature (you wait, about 1 hour)
+-----------------------------------------------------------------------------------
+Claude builds (1) a command that scores any model on rated songs, and (2) saving your profile so
+the robot remembers you after a restart. Nothing for you to do except check the result.
+
+Done when: Claude shows the tests passing and one command that prints scores for
+"random", "popularity only" and "current bandit".
+
+PASTE THIS TO CLAUDE:
+  Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoints P0.5 (evaluation harness) and
+  P0.4 (save/load user profile, with data/profiles/ added to .gitignore first). Run the tests
+  and show me the output. Do not commit yet.
+
+
+STEP 3 - Check that the camera agrees with you (about 30 minutes)
+----------------------------------------------------------------
+Why: the robot will learn from your face. We must first find out whether your face tells the
+truth about what you like.
+
+  3a. Ask Claude to build the tool.
+  3b. Run the tool Claude gives you. You will hear "3, 2, 1, hold a neutral face". Hold a
+      relaxed, non-smiling face for about 8 seconds. Then about 40 song clips play, 10 seconds
+      each. After each clip press UP if you liked it or DOWN if you did not. React naturally.
+      Do not smile on purpose or hold back a smile.
+  3c. Claude prints how often the camera and your thumb agreed.
+
+Done when: you have a result like "camera matched your thumb on 78% of 40 songs".
+Passing is 75% or more. If it is lower, that is useful, not a failure: Claude will switch to
+using only your thumbs and treat the camera as a minor extra.
+
+PASTE THIS TO CLAUDE (3a):
+  Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoint P0.3: a tool that plays 40 gym and
+  party clips, runs the camera with the neutral-face calibration, and records my thumbs up/down
+  after each clip, then prints how often the camera sign matches my thumb with a confusion
+  table. Save results to data/ (git-ignored). Tell me the exact command to run.
+
+PASTE THIS TO CLAUDE (3c, after you ran it):
+  Step 3 done. Here is the output: [paste what the tool printed]. Does it pass the P0.3 gate?
+
+
+STEP 4 - Rate 150 songs (about 40 minutes, one sitting if you can)
+-----------------------------------------------------------------
+This is the most important step. Claude builds a small rating tool. For each song you hear a
+30-second clip and answer TWO questions:
+
+  Question 1, QUALITY: "Ignoring my own taste, how well-made or widely appreciated is this
+                        song?"  1 (poor) to 5 (excellent)
+  Question 2, PREFERENCE: "How much do I personally want to hear this?"  1 to 5
+
+Rules:
+  - They are different questions. A song can be great but not for you (high Q1, low Q2), or a
+    guilty pleasure (low Q1, high Q2). Those disagreements are exactly what teach the model.
+  - Use the whole 1 to 5 range. Do not rate everything 3 or 4.
+  - Do not look the song up first. Go with your first honest reaction.
+  - If you cannot hear a clip, skip it. Take a break every 30 songs.
+  - Songs are a mix of hits and unknown songs on purpose.
+
+Done when: the tool says 150 songs rated. 30 of them are kept hidden as the final exam.
+Quick self-check: you should find yourself giving different numbers to Q1 and Q2 fairly
+often (at least 1 song in 7).
+
+PASTE THIS TO CLAUDE (4a):
+  Read docs/THREE_LAYER_CHECKPOINTS.md. Build checkpoint L1.2: a rating tool with 30-second
+  iTunes clips, two questions per song (quality 1-5, preference 1-5), about 150 songs spread
+  across moods, genres and popularity, with 30 held out as a final test set. Save to
+  data/ratings/ (git-ignored) and let me quit and resume. Give me the command.
+
+PASTE THIS TO CLAUDE (4b, when finished):
+  Step 4 done: I rated [N] songs. Check the L1.2 gate: how many differ by 2+ points between
+  quality and preference?
+
+
+STEP 5 - Re-rate 20 songs the next day (about 10 minutes)
+---------------------------------------------------------
+Why: to check that you are consistent. If you rate the same song differently tomorrow, the
+ratings are too noisy to learn from, and we need to know that.
+
+Done when: Claude reports how many of the 20 repeats were within 1 point (need 80% or more).
+
+PASTE THIS TO CLAUDE:
+  Step 5: start the L1.2 test-retest tool with 20 songs I already rated, then report the
+  agreement. Tell me whether my labels are reliable enough to train on.
+
+
+STEP 6 - Claude trains the base model (you mostly wait; 1 to 3 hours)
+--------------------------------------------------------------------
+Claude may ask you to approve a download of public listening data. Read what it is and say yes
+or no.
+
+Done when: Claude reports the Layer 1 results:
+  - Does the model beat "just play popular songs" on other people's likes?
+  - Does it understand the difference between quality and preference (it should predict your
+    QUALITY ratings better than your PREFERENCE ratings)?
+
+PASTE THIS TO CLAUDE:
+  Step 6: train the base model for checkpoint L1.3 using the agreed data, then report each
+  pass/fail from the L1 gate with the actual numbers. If something fails, tell me why and my
+  options. Do not change the pass marks to make it pass.
+
+
+STEP 7 - Claude fine-tunes it on you (you mostly wait; 1 to 2 hours)
+-------------------------------------------------------------------
+Claude adds a personal layer on top of the base using your training ratings (not the 30 hidden
+ones).
+
+Done when: Claude reports whether the personal model beats (a) the base alone and (b) a model
+trained only on your ratings from scratch, using your held-out songs.
+
+PASTE THIS TO CLAUDE:
+  Step 7: build and train checkpoints L2.1 and L2.2 on my ratings and report the numbers for
+  base-only, from-scratch and fine-tuned on my held-out songs. Do not touch the final 30-song
+  test set yet.
+
+
+STEP 8 - The final exam on paper, then the live session (about 90 minutes in total)
+-------------------------------------------------------------------------------------
+  8a. Claude runs the hidden 30 songs ONCE and reports the scores. No changes afterwards.
+  8b. Live session. You listen to about 40 songs in each of 3 modes:
+        A) random songs for the mood   B) popular songs   C) your personal model.
+      You will NOT be told which mode is running. After each clip press UP or DOWN.
+      Do not try to help or hurt any mode. Sit the way you normally would.
+      Do it in 2 or 3 short sittings with breaks.
+
+Done when: Claude prints the percentage of songs you liked in each mode.
+Passing: the personal model beats "popular" by at least 15 points and "random" by at least 25.
+With only 40 songs per mode the margin of error is about 15 points, so a small win is only a
+hint. Claude will say so.
+
+PASTE THIS TO CLAUDE (8a):
+  Step 8a: run the final held-out test (L3.1) exactly once and report the table.
+
+PASTE THIS TO CLAUDE (8b):
+  Step 8b: build the blind live-session tool for L3.2 (3 randomised modes, thumbs after each
+  clip, camera logged but not used as the label) and give me the command.
+
+PASTE THIS TO CLAUDE (after the sessions):
+  Step 8b done. Report the L3.2 results with the margin of error.
+
+
+STEP 9 - Test on someone else (about 30 minutes)
+------------------------------------------------
+A teammate rates 40 songs with the same tool. This checks the base model helps a person it has
+never seen.
+
+Done when: Claude reports whether the base alone beats "popular songs" on their first 10
+recommendations.
+
+PASTE THIS TO CLAUDE:
+  Step 9: run the L3.3 new-user check with [teammate name]'s ratings and report the result.
+
+
+STEP 10 - Write it up (Claude does it; 15 minutes to read)
+---------------------------------------------------------
+Done when: you have a one-page summary with all numbers, what failed, and the limits. Read it and
+make sure it says only what the numbers support.
+
+PASTE THIS TO CLAUDE:
+  Step 10: write the L3.4 one-page write-up from the real results. Include the pass marks we
+  fixed in advance, everything that failed, and the limits. Do not round failures into passes.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+- Camera will not open: System Settings > Privacy & Security > Camera, allow VS Code, then try again.
+- The tool says "quota" or "429": Google's free daily limit for lookups was used up. It resets in
+  about 11 hours. Songs already looked up are saved and not asked again.
+- No sound or "no preview": check internet and volume. Some songs have no preview; the tool skips them.
+- You are tired: stop. Every tool saves progress. Say "resume" next time.
+- You are unsure what a result means: ask Claude "explain that result in plain words and tell
+  me whether it passes."
+- Anything weird with your data: your ratings and face never leave your laptop. Only song
+  titles and artists go to Apple and Google.
+
+
+PROGRESS TRACKER (tick as you go)
+---------------------------------
+[ ] Step 1  Decisions made
+[ ] Step 2  Scoring tool and save feature built
+[ ] Step 3  Camera vs thumbs checked (want 75% or more)
+[ ] Step 4  150 songs rated
+[ ] Step 5  Re-rated 20 songs (want 80% within 1 point)
+[ ] Step 6  Base model trained, Layer 1 gate reported
+[ ] Step 7  Personal model fine-tuned, Layer 2 gate reported
+[ ] Step 8  Final exam once, then live session
+[ ] Step 9  Tested on a second person
+[ ] Step 10 Write-up done
