@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import statistics as st
+import sys
 
 from integration.orchestrator.run_loop import run
 from music.catalog.songs import get_candidates
@@ -58,11 +59,16 @@ def main():
         raise SystemExit("--empty needs --taste (the plain mock model cannot remove faces)")
     liked = lambda song: song.audio_features["valence"] >= 0.7
     if a.real:
+        # The preview window is drawn from the camera thread; macOS only allows windows on the main thread.
+        preview = sys.platform != "darwin"
         feedback = CameraFeedback(mock=False, camera_index=a.camera, detector=a.detector, enable_bored=a.bored,
                                   calibrate_seconds=a.calibrate_seconds, read_window_seconds=a.window,
-                                  display_preview=True, display_window_seconds=a.window)
+                                  display_preview=preview, display_window_seconds=a.window)
         print(f"REAL camera (index {a.camera} first) + DeepFace, detector '{a.detector}'. No mock fallback.")
-        print("Live preview displays each face's emotion and the rolling average reaction to the current genre.")
+        if preview:
+            print("Live preview displays each face's emotion and the rolling average reaction to the current genre.")
+        else:
+            print("Live preview window is not available on macOS; reactions are still read and printed.")
     elif a.taste:
         from perception.emotion.taste_mock_model import TasteMockModel
 
