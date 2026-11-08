@@ -15,7 +15,7 @@ within a 40-song session? (The robot's real job, which the offline AUC compariso
 2. popularity-greedy: the most popular unplayed song in the pool.
 3. base-only: highest frozen base-model logit; never learns.
 4. old bandit: the existing `BanditAgent` (mainstream prior 0.5, epsilon-greedy), learning from thumbs.
-5. base + online learner, no exploration bonus (beta = 0): offset = base logit; a penalised logistic correction (L2 1.0) refitted after every thumb.
+5. base + online learner, no exploration bonus (beta = 0): offset = base logit; a penalised logistic correction (L2 1.0, changed to 0.05 by the addendum below) refitted after every thumb.
 6. base + online learner with exploration (beta = 0.3): the same, scored as logit + 0.3 * uncertainty.
 7. popularity prior + online learner (beta = 0.3): offset = (popularity - 50) / 25, same learner.
 
@@ -26,3 +26,9 @@ Reported as it comes out; the policy actually shipped is chosen on this plus the
 
 ## Limits
 Closed-world replay: the pools are songs Adi already rated, chosen earlier by several procedures (so the share liked is higher than on random songs and popularity-heavy), 300 sessions share one set of labels, and the thumbs are one person's quick judgements.
+
+## Addendum (before the replay was run on any real data): learner penalty changed from 1.0 to 0.05
+The policies above said "L2 1.0". While testing the learner on a **synthetic** world (the person likes jazz and folk, the prior favours rock), a penalty of 1.0 barely learned:
+after 60 labels the liked-genre gap on unseen songs was -0.07 (it still ranked the prior's favourite above the person's), against +0.18 at 0.1, +0.35 at 0.05 and +0.73 at 0.01.
+Step 7's own cross-validation had chosen penalties of 0.01 (13 of 25 folds) and 0.1 (6 of 25), so 1.0 was a poor choice made without consulting it. The penalty is now **0.05**, fixed for all learner policies (5, 6, 7).
+No real-data replay result had been seen when this was written. Nothing else in this file changes.
