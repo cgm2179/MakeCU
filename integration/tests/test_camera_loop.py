@@ -13,10 +13,15 @@ from music.catalog.songs import SONGS
 HAVE_DEPS = all(importlib.util.find_spec(m) for m in ("cv2", "fastapi", "uvicorn", "numpy"))
 
 
-from perception.emotion.camera_reaction import calibrate_liking, check_baseline
+from perception.emotion.camera_reaction import _reaction_text, calibrate_liking, check_baseline
 
 
 class TestCalibrationMath(unittest.TestCase):
+    def test_preview_text_reports_average_reaction_to_genre(self):
+        self.assertEqual(_reaction_text(0.2, "pop"), "Enjoying pop (avg +0.20)")
+        self.assertEqual(_reaction_text(-0.2, "rock"), "Not enjoying rock (avg -0.20)")
+        self.assertEqual(_reaction_text(0.0, "jazz"), "Neutral to jazz (avg +0.00)")
+
     def test_baseline_maps_to_zero_and_extremes_stay_at_extremes(self):
         for b in (-0.6, -0.3, 0.0, 0.4):
             self.assertAlmostEqual(calibrate_liking(b, b), 0.0)

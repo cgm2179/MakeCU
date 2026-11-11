@@ -38,6 +38,16 @@ MAX_BASELINE = 0.15  # a neutral face reads at or below ~0 on this model; higher
 MAX_SPREAD = 0.25    # a still face gives a steady reading; more spread means it was moving
 
 
+def _reaction_text(liking: float, genre: str) -> str:
+    if liking >= 0.2:
+        response = f"Enjoying {genre}"
+    elif liking <= -0.2:
+        response = f"Not enjoying {genre}"
+    else:
+        response = f"Neutral to {genre}"
+    return f"{response} (avg {liking:+.2f})"
+
+
 def check_baseline(baseline: float, spread: float, max_baseline: float = MAX_BASELINE,
                    max_spread: float = MAX_SPREAD) -> list[str]:
     """Reasons a calibration should be rejected (empty list = accept)."""
@@ -105,7 +115,8 @@ class CameraFeedback:
 
     def __init__(self, mock=True, model=None, host="127.0.0.1", port=None, detector="yunet",
                  feed_fps=20, empty_rounds=(), camera_index=None, fallback_indices=(1, 2, 3),
-                 max_width=640, enable_bored=False, calibrate_seconds=0.0, read_window_seconds=0.0):
+                 max_width=640, enable_bored=False, calibrate_seconds=0.0, read_window_seconds=0.0,
+                 display_preview=False, display_window_seconds=3.0):
         self.mock, self.model, self.host, self.port = mock, model, host, port
         self.camera_index, self.fallback_indices = camera_index, tuple(fallback_indices)
         self.max_width = max_width  # frames are shrunk to this width before the model sees them
@@ -123,6 +134,10 @@ class CameraFeedback:
         self.feeder_error: Exception | None = None
         self.enable_bored = enable_bored
         self.calibrate_seconds, self.read_window_seconds = calibrate_seconds, read_window_seconds
+        self.display_preview = display_preview
+        self.display_window_seconds = display_window_seconds
+        self.current_genre = "music"
+        self._display_samples = collections.deque(maxlen=6000)
         self.baseline: float | None = None
         self.baseline_std = 0.0
         self.last_calibration: dict | None = None
@@ -298,7 +313,7 @@ class CameraFeedback:
             self.stop()
             raise RuntimeError(f"DeepFace detector '{self.detector}' cannot run: {type(err).__name__}: {err}") from err
 
-    def _process(self, phone_id: str, jpg: bytes) -> None:
+    def _process(self, phone_id: str, jpg: bytes) -> dict:
         t0 = time.time()
         reply = self.service.process_frame(phone_id, jpg)
         self._ms += (time.time() - t0) * 1000
@@ -308,11 +323,14 @@ class CameraFeedback:
         for f in reply.get("faces", []):
             x, y, w, h = f["box"]
             self._motion.append((now, f["person_id"], x + w / 2, y + h / 2, w, h))
+        return reply
 
     def _read_webcam(self) -> None:
         import cv2
 
         phone_id = f"local-camera-{self.camera_used}"
+        window_name = "MakeCU - Live camera reactions"
+        preview_opened = False
         while not self._stop.is_set():
             try:
                 ok, frame = self._cap.read()
@@ -321,12 +339,53 @@ class CameraFeedback:
                 h, w = frame.shape[:2]
                 if w > self.max_width:
                     frame = cv2.resize(frame, (self.max_width, int(h * self.max_width / w)))
+                h, w = frame.shape[:2]
                 ok, enc = cv2.imencode(".jpg", frame)
                 if ok:
-                    self._process(phone_id, enc.tobytes())
+                    reply = self._process(phone_id, enc.tobytes())
+                    if self.display_preview:
+                        now = time.time()
+                        for face in reply.get("faces", []):
+                            self._display_samples.append((now, float(face["liking"])))
+                            x, y, box_w, box_h = face["box"]
+                            left, top = round(x * w), round(y * h)
+                            right, bottom = round((x + box_w) * w), round((y + box_h) * h)
+                            color = (0, 220, 0) if face["liking"] >= 0 else (0, 0, 255)
+                            cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+                            label = f'{face["emotion"]} {face["liking"]:+.2f}'
+                            cv2.putText(frame, label, (left, max(20, top - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                        cutoff = now - self.display_window_seconds
+                        while self._display_samples and self._display_samples[0][0] < cutoff:
+                            self._display_samples.popleft()
+                        if self._display_samples:
+                            raw_liking = sum(value for _, value in self._display_samples) / len(self._display_samples)
+                            liking = self._cal(raw_liking)
+                            status = _reaction_text(liking, self.current_genre)
+                            color = (0, 220, 0) if liking >= 0.2 else (0, 0, 255) if liking <= -0.2 else (0, 220, 255)
+                        else:
+                            status = f"No face detected | {self.current_genre}"
+                            color = (255, 255, 255)
+                        cv2.rectangle(frame, (0, 0), (frame.shape[1], 38), (0, 0, 0), -1)
+                        cv2.putText(frame, status, (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                        cv2.imshow(window_name, frame)
+                        preview_opened = True
+                        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                            self.display_preview = False
+                            cv2.destroyWindow(window_name)
+                            preview_opened = False
             except Exception as err:  # keep going; surface it afterwards
                 self.feeder_error = err
+                if self.display_preview:
+                    self.display_preview = False
+                    if preview_opened:
+                        cv2.destroyWindow(window_name)
+                        preview_opened = False
                 time.sleep(0.1)
+        if preview_opened:
+            cv2.destroyWindow(window_name)
+        self.service.drop_phone(phone_id)
 
     def consume_stats(self):
         """(frames analysed, average ms per frame, faces in the latest frame) since the last call."""
@@ -377,6 +436,8 @@ class CameraFeedback:
         """Called when a song starts (lets a taste-aware mock model know what is playing)."""
         self._round += 1
         self._clip_start = time.time()
+        self.current_genre = getattr(song, "genre", None) or "music"
+        self._display_samples.clear()
         ps, self._preroll_start = self._preroll_start, None
         self._preroll = (ps, self._clip_start) if ps is not None and self._clip_start - ps >= self.PREROLL_MIN_S else None
         feats = getattr(song, "audio_features", None) or {}

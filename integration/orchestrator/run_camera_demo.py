@@ -8,6 +8,7 @@ Run from the repo root with a Python that has the camera deps (opencv-python, fa
     python3 -m integration.orchestrator.run_camera_demo --songs 3 --audio                 # + real previews
 
 --real           : your actual webcam and the DeepFace model (needs camera permission, internet on first run).
+                   Displays a preview with face emotions and rolling genre-reaction feedback.
 --mock (default): perception_cv.build_service(mock=True), random faces that do not depend on the song.
 --taste         : mock faces that react to the song (hidden taste: likes happy-sounding songs,
                   valence >= 0.7), still going through the real tracker + scoring pipeline.
@@ -16,12 +17,15 @@ from __future__ import annotations
 
 import argparse
 import statistics as st
+import sys
 
 from integration.orchestrator.run_loop import run
 from music.catalog.songs import get_candidates
 from shared.config.defaults import DEMO_SONG_SECONDS
 from music.catalog.spotify_catalog import dataset_available
 from perception.emotion.camera_reaction import CameraFeedback
+from motion.control.emotion_arms import EmotionArms
+from motion.drivers.arm_link import ArmLink
 from shared.schemas.messages import Filter, FilterSource
 
 
@@ -40,6 +44,7 @@ def main():
     ap.add_argument("--bored", action="store_true", help="re-enable their stillness-based 'bored' label (off by default)")
     ap.add_argument("--audio", action="store_true", help="play iTunes previews; the reaction is read when the clip ends")
     ap.add_argument("--clip-seconds", type=float, default=None, help="iTunes preview length; default = DEMO_SONG_SECONDS (30)")
+    ap.add_argument("--arm-port", default=None, help="Arduino serial port for emotion-driven arms, e.g. COM5")
     ap.add_argument("--mainstream-bias", type=float, default=None, metavar="0..1",
                     help="lean toward well-known songs on the database path (default 0.5; 0 = off)")
     ap.add_argument("--seed", type=int, default=0)
@@ -54,9 +59,16 @@ def main():
         raise SystemExit("--empty needs --taste (the plain mock model cannot remove faces)")
     liked = lambda song: song.audio_features["valence"] >= 0.7
     if a.real:
+        # The preview window is drawn from the camera thread; macOS only allows windows on the main thread.
+        preview = sys.platform != "darwin"
         feedback = CameraFeedback(mock=False, camera_index=a.camera, detector=a.detector, enable_bored=a.bored,
-                                  calibrate_seconds=a.calibrate_seconds, read_window_seconds=a.window)
+                                  calibrate_seconds=a.calibrate_seconds, read_window_seconds=a.window,
+                                  display_preview=preview, display_window_seconds=a.window)
         print(f"REAL camera (index {a.camera} first) + DeepFace, detector '{a.detector}'. No mock fallback.")
+        if preview:
+            print("Live preview displays each face's emotion and the rolling average reaction to the current genre.")
+        else:
+            print("Live preview window is not available on macOS; reactions are still read and printed.")
     elif a.taste:
         from perception.emotion.taste_mock_model import TasteMockModel
 
@@ -71,18 +83,28 @@ def main():
     listen_s = a.listen_seconds if a.listen_seconds is not None else DEMO_SONG_SECONDS
     clip_s = a.clip_seconds if a.clip_seconds is not None else DEMO_SONG_SECONDS
     print(f"Each song runs for {clip_s if a.audio else listen_s:.0f}s (DEMO_SONG_SECONDS={DEMO_SONG_SECONDS}; change in shared/config/defaults.py)")
+    arm_link = ArmLink(a.arm_port)
+    if a.arm_port:
+        print(f"Arduino emotion arms enabled on {a.arm_port}.")
+    else:
+        print("Arduino arms disabled; pass --arm-port COMx to send emotion commands.")
     player = None
-    if a.audio:
-        from music.playback.audio import AudioPlayer
-
-        player = AudioPlayer(clip_seconds=clip_s)
     try:
+        if a.audio:
+            from music.playback.audio import AudioPlayer
+
+            player = AudioPlayer(clip_seconds=clip_s)
         out = run(a.songs, event=a.mood, seed=a.seed, pool=pool, feedback=feedback, player=player,
                   wait_for_playback=bool(player), listen_seconds=listen_s, round_delay=0,
-                  overrides={}, verbose=not a.quiet, mainstream_bias=a.mainstream_bias)
+                  overrides={}, verbose=not a.quiet, mainstream_bias=a.mainstream_bias,
+                  arms=EmotionArms(arm_link))
     finally:
-        if player:
-            player.close()
+        try:
+            feedback.stop()
+        finally:
+            if player:
+                player.close()
+            arm_link.close()
 
     log = out["log"]
     print(f"\nRounds: {len(log)}, learned from {len(out['rewards'])}, skipped (nobody in view): {out['skipped_rounds']}")
